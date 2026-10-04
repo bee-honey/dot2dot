@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing / tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Environment / secrets
+.env
+.env.*
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Model weights (rembg etc.)
+*.onnx
+*.pth
+models/
+
+# Generated output
+output/
+*.pdf
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
