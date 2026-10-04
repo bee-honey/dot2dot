@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dot2dot"
+version = "0.1.0"
+description = "Turn any photo into a printable connect-the-dots puzzle."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "reportlab>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+dot2dot = "dot2dot.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dot2dot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

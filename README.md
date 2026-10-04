@@ -8,7 +8,9 @@ Photo → simplified outline → strategically placed dots → numbered sequence
 
 Upload a picture of your kid on a bike, the family dog, or grandma's garden, pick a difficulty, and get a worksheet (plus an answer key) ready to print.
 
-> **Status:** early prototype. Nothing works yet — this README is the plan.
+> **Status:** Phase 1 done. The CLI turns a silhouette-style image (subject on a plain background) into a numbered puzzle + answer-key PDF.
+>
+> New to Python from Java? See [docs/python-for-java-devs.md](docs/python-for-java-devs.md).
 
 ---
 
@@ -104,58 +106,63 @@ Difficulty presets:
 
 ---
 
-## Planned project layout
+## Project layout
 
 ```
 dot2dot/
 ├── dot2dot/
-│   ├── preprocess.py     # resize, denoise, normalize
-│   ├── segment.py        # background removal / subject mask
-│   ├── contours.py       # edge detection, contour extraction
-│   ├── simplify.py       # contour simplification & resampling
-│   ├── select.py         # importance scoring, pick N dots
-│   ├── order.py          # dot sequencing
-│   ├── labels.py         # number placement
+│   ├── models.py         # Dot, Puzzle data types
+│   ├── preprocess.py     # load, resize, grayscale, blur
+│   ├── contours.py       # subject mask + outline extraction
+│   ├── simplify.py       # outline → exactly N dots, keeping corners
+│   ├── order.py          # dot sequencing (clockwise, nearest outline next)
+│   ├── labels.py         # number placement (outside the shape)
 │   ├── render.py         # SVG output (puzzle + solution)
-│   ├── pdf.py            # PDF worksheet generation
-│   └── pipeline.py       # end-to-end orchestration
-├── app/
-│   └── streamlit_app.py  # prototype UI
-├── samples/              # test images
+│   ├── pdf.py            # PDF worksheet (puzzle + answer key)
+│   ├── pipeline.py       # end-to-end orchestration
+│   ├── cli.py            # command-line interface
+│   └── __main__.py       # `python -m dot2dot`
+├── samples/              # sample images + generator script
 ├── tests/
+├── docs/
 ├── pyproject.toml
 └── README.md
 ```
+
+Planned for later phases: `segment.py` (background removal), importance-based point selection, `app/streamlit_app.py`.
 
 ---
 
 ## Getting started
 
-> Not runnable yet — these are the intended commands.
-
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# CLI
-python -m dot2dot samples/dog.jpg --dots 60 --out dog.pdf
+# Make a puzzle (writes output/cat.pdf: page 1 puzzle, page 2 answer key)
+dot2dot samples/cat.png --dots 50
 
-# Prototype UI
-streamlit run app/streamlit_app.py
+# Also write SVG previews, trace up to 3 separate shapes, custom title
+dot2dot samples/star.png --dots 30 --outlines 3 --svg --title "Star Power"
+
+# Run the tests
+pytest
 ```
+
+Works best today with a clear subject on a plain, contrasting background.
 
 ---
 
 ## Roadmap
 
 ### Phase 1 — Core pipeline (MVP)
-- [ ] Load image, preprocess, extract largest contours
-- [ ] Simplify and resample to N dots
-- [ ] Order dots along contours
-- [ ] Render numbered SVG + solution
-- [ ] Export single-page PDF
-- [ ] CLI: `python -m dot2dot <image> --dots N`
+- [x] Load image, preprocess, extract largest contours
+- [x] Simplify and resample to N dots
+- [x] Order dots along contours
+- [x] Render numbered SVG + solution
+- [x] Export PDF (puzzle + answer key)
+- [x] CLI: `python -m dot2dot <image> --dots N`
 
 ### Phase 2 — Quality
 - [ ] Background removal
