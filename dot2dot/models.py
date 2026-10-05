@@ -2,6 +2,34 @@
 
 from dataclasses import dataclass
 
+import numpy as np
+
+
+@dataclass(frozen=True)
+class Path:
+    """A traced line in image pixel coordinates, before it becomes dots.
+
+    `points` is an (N, 2) array of (x, y). A closed path is a loop (an outline);
+    an open path has two free ends (a line inside the drawing).
+    """
+
+    points: np.ndarray
+    closed: bool
+    # Essential paths (like the subject's silhouette) are never dropped.
+    essential: bool = False
+    # Importance multiplier: a path with weight 3 gets dots as if it were
+    # three times as long (used to give faces more detail).
+    weight: float = 1.0
+
+    def length(self) -> float:
+        steps = np.linalg.norm(np.diff(self.points, axis=0), axis=1).sum()
+        if self.closed:
+            steps += np.linalg.norm(self.points[-1] - self.points[0])
+        return float(steps)
+
+    def weighted_length(self) -> float:
+        return self.length() * self.weight
+
 
 @dataclass(frozen=True)
 class Dot:
@@ -10,10 +38,23 @@ class Dot:
     number: int
     x: float
     y: float
-    # Unit vector pointing away from the shape; used to place the label
-    # outside the outline instead of on top of the line.
+    # Unit vector from the dot toward where its number is printed.
     label_dx: float = 0.0
     label_dy: float = -1.0
+    # True for the first dot of every line after the first (drawn with a ring).
+    starts_stroke: bool = False
+
+
+@dataclass(frozen=True)
+class Stroke:
+    """A run of consecutive dots drawn without lifting the pencil.
+
+    Covers dots[start:end]. A closed stroke ends by joining back to its first dot.
+    """
+
+    start: int
+    end: int
+    closed: bool
 
 
 @dataclass(frozen=True)
@@ -23,21 +64,20 @@ class Puzzle:
     width: int
     height: int
     dots: list[Dot]
-    # Index into `dots` where each new stroke begins. The solution draws
-    # dots[i-1] -> dots[i] unless i is a stroke start, in which case the
-    # pen "lifts" (no line is drawn).
-    stroke_starts: list[int]
+    strokes: list[Stroke]
+    # Label font size in image pixels; renderers scale it with everything else.
+    font_size: float
 
     def segments(self) -> list[tuple[Dot, Dot]]:
         """Pairs of dots that should be connected in the solution."""
-        starts = set(self.stroke_starts)
         pairs = []
-        for i in range(1, len(self.dots)):
-            if i not in starts:
-                pairs.append((self.dots[i - 1], self.dots[i]))
-        # Close each stroke back to its first dot (outlines are loops).
-        boundaries = self.stroke_starts + [len(self.dots)]
-        for start, end in zip(boundaries, boundaries[1:]):
-            if end - start > 2:
-                pairs.append((self.dots[end - 1], self.dots[start]))
+        for stroke in self.strokes:
+            run = self.dots[stroke.start : stroke.end]
+            pairs.extend(zip(run, run[1:]))
+            if stroke.closed and len(run) > 2:
+                pairs.append((run[-1], run[0]))
         return pairs
+
+    def stroke_start_dots(self) -> list[Dot]:
+        """First dot of every stroke after the first: where to lift the pencil."""
+        return [d for d in self.dots if d.starts_stroke]

@@ -199,6 +199,92 @@ pixels along the normal, outside the outline.
 - `to_page` is a **nested function** (a closure). It can read `scale` and
   `offset_x` from the enclosing function, like a lambda capturing effectively-final locals.
 
+### Line-art style: `lineart.py` + `skeleton.py`
+Used with `--style lineart` to trace the lines *inside* a drawing.
+
+- **Ink mask**: keep pixels whose brightest color channel (HSV "value") is
+  below 60. Plain grayscale would treat deep red as dark; HSV value doesn't.
+- **Morphology** is the toolbox here. Think of sliding a small shape (a
+  "kernel") over the image:
+  - *opening* erases anything the kernel can't fit inside (thin specks, or,
+    with a big disk, all lines, leaving only solid black areas),
+  - *dilation* grows shapes, *closing* fills small gaps.
+- **Skeletonize** (scikit-image) thins every ink line down to a 1-pixel
+  centerline, like drawing a pencil line down the middle of a marker stroke.
+- **Graph tracing** (`skeleton.py`) is plain algorithms code you'd write the
+  same way in Java: pixels are nodes, touching pixels are edges. Walk from
+  every end/junction until the next one to get branches, then re-join
+  branches that continue smoothly through a junction (pairing ends by the
+  dot product of their directions). Python notes:
+  - `Pixel = tuple[int, int]` is a *type alias*, like a tiny typedef.
+  - `set[Pixel]` / `dict[Pixel, int]` work like `HashSet`/`HashMap`; tuples
+    are hashable, so they can be keys (no need for a `Point` class with
+    `equals`/`hashCode`).
+  - `frozenset((a, b))` is an immutable set used as an *unordered* edge key,
+    so `(a, b)` and `(b, a)` are the same edge.
+  - `_SkeletonGraph` is a class because it bundles state (pixels, degrees)
+    with behavior; a leading `_` marks it module-private.
+  - `walk` is defined *inside* `branches`, a closure over `visited`, like a
+    local class or lambda capturing a local collection.
+
+### Silhouette: the paint-bucket trick
+`lineart.silhouette` finds the subject's outer border, like the paint-bucket
+tool in an image editor:
+- **Barrier** = ink pixels *or* pixels whose color differs from the
+  background (measured in Lab color space, where distance matches what the
+  eye sees). The suit's red/blue blocks the paint even where the black
+  outline has a gap.
+- `cv2.connectedComponents` labels every separate open region; regions
+  touching a strip just inside the image edge are background. Everything
+  else is the subject. (Seeding from a strip, not the very edge, copes with
+  frames drawn around the picture.)
+- Interior lines that run along the silhouette are clipped out
+  (`clip_paths`) so the edge isn't traced twice.
+- `Path.essential = True` marks the silhouette so `select_paths` never
+  drops it. `dataclasses.replace(path, points=...)` copies a frozen
+  dataclass with one field changed, like a record "wither" in Java.
+
+### Photo style: `photo.py`
+- **rembg** runs a U²-Net segmentation model through **onnxruntime**: a
+  trained neural network exported to the portable ONNX format, run locally
+  like any library call. It returns a mask of the subject.
+- **XDoG**: blur the image twice (a little, then more) and subtract.
+  Flat areas cancel; edges and thin dark features remain. That turns a photo
+  into a sketch the lineart code can trace.
+- **YuNet** (`cv2.FaceDetectorYN`) finds faces; lines inside get
+  `weight=3`, so `allocate_dots` treats them as three times longer.
+- `@lru_cache(maxsize=1)` on `_rembg_session()` loads the model once and
+  reuses it, effectively a lazily created singleton bean.
+- `from rembg import remove` sits *inside* the function: a deliberate lazy
+  import, because loading rembg takes about a second and only photos need it.
+- MediaPipe (Google's face-landmark library) was tried first but crashes on
+  this Mac with Python 3.14, so it was dropped. Prefer dependencies you can
+  verify on your actual platform.
+
+### Image loading
+`preprocess.py` reads files with **Pillow** rather than OpenCV:
+`ImageOps.exif_transpose` applies the rotation phones store in metadata,
+transparent areas are blended onto white, and `pillow_heif` adds iPhone HEIC
+support. All three would otherwise be bugs: sideways photos, black
+backgrounds, unreadable files.
+
+### Quality score: `quality.py`
+Measures the puzzle against the full set of extracted lines (`Result.reference`).
+The key tool is a **distance transform**: for every pixel it stores the
+distance to the nearest line pixel. "Is this reference pixel within 12 px of
+a solution line?" then becomes a single array lookup for every pixel at once:
+`(to_solution[reference_pixels] <= tolerance).mean()`.
+
+`Quality.overall` is a `@property`, a method you read like a field (Java
+would call it `getOverall()`).
+
+### Number placement: `labels.py`
+Each number tries 16 positions around its dot and scores each by its
+clearance (distance from the number's box to the nearest other dot, line, or
+already-placed number). The highest score wins. All 16 candidates are scored
+at once with NumPy broadcasting: arrays shaped `(16, 1, 2)` minus `(1, M, 2)`
+give a `(16, M, 2)` grid of differences, with no nested loops.
+
 ### CLI: `cli.py`
 `argparse` is Python's built-in equivalent of picocli / Apache Commons CLI.
 `main()` returns an exit code, and `__main__.py` passes it to `sys.exit`.
@@ -229,11 +315,45 @@ pytest -x           # stop at first failure
 
 ---
 
-## 7. Spring analogies for later phases
+## 7. The web app: FastAPI ≈ Spring MVC
+
+`dot2dot/web/app.py` is the whole backend.
+
+| Spring | FastAPI (this repo) |
+|---|---|
+| `@SpringBootApplication` + embedded Tomcat | `app = FastAPI()` + `uvicorn.run(app)` |
+| `@PostMapping("/api/puzzles")` | `@app.post("/api/puzzles", response_model=PuzzleOut)` |
+| `@RequestParam MultipartFile image` | `image: UploadFile = File(...)` |
+| `@RequestParam int dots` (form field) | `dots: int = Form(150)`, converted and validated automatically |
+| `@PathVariable String id` | `def download_pdf(puzzle_id: str)` with `"/api/puzzles/{puzzle_id}/pdf"` |
+| Response DTO + Jackson | Pydantic `BaseModel` (`PuzzleOut`), serialized to JSON |
+| `throw new ResponseStatusException(BAD_REQUEST, ...)` | `raise HTTPException(400, "...")` |
+| `src/main/resources/static/` | `StaticFiles(directory=...)` mounted at `/static` |
+| `MockMvc` tests | `TestClient(app)` in `tests/test_web.py` |
+| Swagger / springdoc | Built in: open http://127.0.0.1:8000/docs |
+
+Things that differ:
+- **`def` vs `async def` endpoints.** FastAPI runs `async def` handlers on
+  one event loop (like WebFlux) and plain `def` handlers on a thread pool
+  (like classic Spring MVC). Image processing is CPU-heavy and blocking, so
+  `create_puzzle` is a plain `def`. Making it `async def` would freeze the
+  server for everyone while one image processes.
+- **No DI container.** Shared objects like the PDF cache are plain
+  module-level variables (`pdfs = _PdfCache(...)`), effectively a singleton.
+  FastAPI does have `Depends(...)` for injection when you need it.
+- **In-memory state.** Recent PDFs live in an LRU cache in memory and
+  disappear on restart. A real deployment would use object storage (S3).
+- `uvicorn dot2dot.web.app:app --reload` restarts on code changes, like
+  Spring DevTools.
+
+The front end (`static/index.html`) is plain HTML/CSS/JS with no build step:
+a form posts the image with `fetch` as `multipart/form-data`, and the JSON
+response's SVG strings are inserted into the page.
+
+## 8. Spring analogies for later phases
 
 | Coming up | Python tool | Spring equivalent |
 |---|---|---|
-| Web API | FastAPI | Spring MVC / `@RestController` |
-| Request/response models | Pydantic | DTOs + Bean Validation |
-| Server | uvicorn | embedded Tomcat |
-| Prototype UI | Streamlit | (no real equivalent; a whole UI in one script) |
+| Calling the Claude API | `anthropic` SDK | a typed REST client (like `RestClient`) |
+| Background jobs | `asyncio` tasks / Celery | `@Async` / Spring Batch |
+| Config & secrets | env vars + `pydantic-settings` | `application.yml` + `@ConfigurationProperties` |

@@ -42,3 +42,6 @@ output/
 .vscode/
 .idea/
 .DS_Store
+
+# Personal test photos (never commit)
+samples/private/

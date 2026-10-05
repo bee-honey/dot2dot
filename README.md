@@ -8,7 +8,7 @@ Photo → simplified outline → strategically placed dots → numbered sequence
 
 Upload a picture of your kid on a bike, the family dog, or grandma's garden, pick a difficulty, and get a worksheet (plus an answer key) ready to print.
 
-> **Status:** Phase 1 done. The CLI turns a silhouette-style image (subject on a plain background) into a numbered puzzle + answer-key PDF.
+> **Status:** Phase 1 done, plus a `lineart` style that traces the lines *inside* inked drawings (comics, cartoons), not just the outer border.
 >
 > New to Python from Java? See [docs/python-for-java-devs.md](docs/python-for-java-devs.md).
 
@@ -113,14 +113,21 @@ dot2dot/
 ├── dot2dot/
 │   ├── models.py         # Dot, Puzzle data types
 │   ├── preprocess.py     # load, resize, grayscale, blur
-│   ├── contours.py       # subject mask + outline extraction
-│   ├── simplify.py       # outline → exactly N dots, keeping corners
-│   ├── order.py          # dot sequencing (clockwise, nearest outline next)
-│   ├── labels.py         # number placement (outside the shape)
+│   ├── contours.py       # outline style: subject mask + border
+│   ├── lineart.py        # lineart style: ink mask, thick/thin split
+│   ├── photo.py          # photo style: background removal, XDoG sketch, faces
+│   ├── skeleton.py       # trace 1px skeleton lines into paths
+│   ├── simplify.py       # path → exactly N dots, keeping corners
+│   ├── order.py          # stroke sequencing (nearest line next)
+│   ├── labels.py         # collision-aware number placement
+│   ├── quality.py        # coverage/accuracy score + check image
 │   ├── render.py         # SVG output (puzzle + solution)
 │   ├── pdf.py            # PDF worksheet (puzzle + answer key)
 │   ├── pipeline.py       # end-to-end orchestration
 │   ├── cli.py            # command-line interface
+│   ├── web/
+│   │   ├── app.py        # FastAPI app (upload → puzzle JSON, PDF download)
+│   │   └── static/index.html  # single-page UI
 │   └── __main__.py       # `python -m dot2dot`
 ├── samples/              # sample images + generator script
 ├── tests/
@@ -140,17 +147,46 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Make a puzzle (writes output/cat.pdf: page 1 puzzle, page 2 answer key)
+# Web app: upload an image, see puzzle + answer key, download the PDF
+dot2dot-web                     # then open http://127.0.0.1:8000
+
+# Outline style: trace the subject's border (writes output/cat.pdf)
 dot2dot samples/cat.png --dots 50
 
-# Also write SVG previews, trace up to 3 separate shapes, custom title
-dot2dot samples/star.png --dots 30 --outlines 3 --svg --title "Star Power"
+# Line-art style: follow the drawing's ink lines, including details inside
+dot2dot samples/face.png --style lineart --dots 80 --svg
+
+# Custom title, SVG previews, cap the number of separate lines
+dot2dot my_cartoon.png --style lineart --dots 250 --max-lines 30 --title "Hero Time" --svg
+
+# Real photo (first run downloads a ~170 MB background-removal model)
+dot2dot family_photo.heic --style photo --dots 150
+
+# Write a coverage check image: gray = traced, magenta = missed
+dot2dot my_cartoon.png --style lineart --dots 250 --check
 
 # Run the tests
 pytest
 ```
 
-Works best today with a clear subject on a plain, contrasting background.
+| Style | Use for | How it works |
+|-------|---------|--------------|
+| `outline` (default) | A clear subject on a plain, contrasting background | Separates subject from background, traces the border |
+| `photo` | Real photos: people, pets, objects (JPG, PNG, iPhone HEIC) | Removes the background with a segmentation model (rembg, runs locally), traces the subject's outline, sketches interior features with an XDoG filter, and gives faces extra dots (OpenCV YuNet face detector) |
+| `lineart` | Comics, cartoons, coloring-book art with dark ink lines | Traces the full silhouette as one unbroken loop, then adds interior ink lines (thinned to centerlines) and the edges of solid black areas |
+
+Every run prints a quality score, e.g.
+
+```
+Quality 92/100 | outline 100% | detail 71% | accuracy 99% | crowded labels 12
+```
+
+- **outline**: share of the silhouette traced by the solution lines
+- **detail**: share of the interior line work traced
+- **accuracy**: share of solution line length that sits on a real line (no shortcuts across empty space)
+- **crowded labels**: numbers overlapping another number or dot
+
+In multi-line puzzles, a **ringed dot** marks the start of a new line: lift the pencil and continue from there. Detailed drawings need more dots (200–400) to stay recognizable.
 
 ---
 
@@ -165,12 +201,19 @@ Works best today with a clear subject on a plain, contrasting background.
 - [x] CLI: `python -m dot2dot <image> --dots N`
 
 ### Phase 2 — Quality
-- [ ] Background removal
+- [x] Background removal (`--style photo`)
 - [ ] Curvature-aware point selection
-- [ ] Collision-free number placement
-- [ ] Multi-contour ordering with minimal jumps
+- [x] Collision-aware number placement (avoids dots, lines, other numbers)
+- [x] Multi-contour ordering with minimal jumps
+- [x] Interior lines for inked drawings (`--style lineart`)
+- [x] Interior lines for photos (XDoG sketch inside the subject)
+- [x] Faces get extra dots (face detection + finer sketch)
+- [ ] Merge near-duplicate dots where separate lines meet
+- [x] Silhouette always traced as one complete loop in lineart
+- [x] Automatic quality score (`--check` for a visual coverage map)
+- [x] Importance weighting (`Path.weight`; used for faces in photo style)
 - [ ] Difficulty presets (Kids / Normal / Expert)
-- [ ] Streamlit prototype: upload → preview puzzle → preview solution → download PDF
+- [x] Local web app: upload → preview puzzle → preview solution → download PDF (`dot2dot-web`)
 
 ### Phase 3 — More styles
 - [ ] Hybrid style (pre-drawn features + dotted silhouette)
@@ -178,6 +221,7 @@ Works best today with a clear subject on a plain, contrasting background.
 - [ ] Stipple / micro-dot styles
 
 ### Phase 4 — AI-assisted
+- [ ] AI reviewer: a vision model scores candidate puzzles (several settings) and picks the best / suggests adjustments (`--review`)
 - [ ] Subject classification (person / animal / vehicle / object) → per-category strategy
   - Portrait: face outline, hair silhouette, key facial features
   - Animal: silhouette + major features
@@ -192,6 +236,13 @@ Works best today with a clear subject on a plain, contrasting background.
 - [ ] Web / iOS front end
 
 ---
+
+## Privacy
+
+Everything runs locally: background removal and face detection use models
+downloaded once to your machine (`~/.rembg`, `~/.cache/dot2dot`). Photos are
+never uploaded anywhere. Put personal test photos in `samples/private/`,
+which is git-ignored.
 
 ## A note on images
 

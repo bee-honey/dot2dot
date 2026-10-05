@@ -1,13 +1,19 @@
-"""Stage 4: decide which dot is #1 and which way the numbering runs.
+"""Stage 4: decide which dot is #1 and the order everything is drawn in.
 
-Rules for Phase 1:
-- Each outline is numbered clockwise, so the drawing feels natural.
-- The first outline starts at its topmost point.
-- When there are several outlines, after finishing one we jump to the
-  nearest point on the closest remaining outline (fewest long jumps).
+Rules:
+- Loops are numbered clockwise, so the drawing feels natural.
+- The puzzle starts on the main path (the silhouette if there is one,
+  otherwise the longest path), at
+  its topmost dot for a loop or its higher end for an open line.
+- After finishing a stroke, jump to the nearest unfinished stroke. A loop can
+  be entered at any of its dots; an open line from either end.
 """
 
+from dataclasses import replace
+
 import numpy as np
+
+from dot2dot.models import Path
 
 
 def signed_area(points: np.ndarray) -> float:
@@ -31,23 +37,40 @@ def topmost_index(points: np.ndarray) -> int:
     return int(np.lexsort((points[:, 0], points[:, 1]))[0])
 
 
-def order_outlines(outlines: list[np.ndarray]) -> list[np.ndarray]:
-    """Return the outlines in drawing order, each rotated to its start dot."""
-    remaining = [make_clockwise(o) for o in outlines]
+def _entry(path: Path, pen: np.ndarray) -> tuple[float, np.ndarray]:
+    """Best way to start drawing `path` from pen position `pen`.
 
-    first = remaining.pop(0)
-    ordered = [rotate_to_start(first, topmost_index(first))]
+    Returns (distance to travel, points re-ordered to start there).
+    """
+    points = path.points
+    if path.closed:
+        distances = np.linalg.norm(points - pen, axis=1)
+        i = int(np.argmin(distances))
+        return float(distances[i]), rotate_to_start(points, i)
+    to_first = float(np.linalg.norm(points[0] - pen))
+    to_last = float(np.linalg.norm(points[-1] - pen))
+    return (to_first, points) if to_first <= to_last else (to_last, points[::-1])
+
+
+def order_paths(paths: list[Path]) -> list[Path]:
+    """Return paths in drawing order, each re-ordered to start at its first dot."""
+    remaining = [replace(p, points=make_clockwise(p.points)) if p.closed else p for p in paths]
+
+    first = remaining.pop(max(range(len(remaining)), key=lambda i: (remaining[i].essential, remaining[i].length())))
+    points = first.points
+    if first.closed:
+        points = rotate_to_start(points, topmost_index(points))
+    elif points[-1][1] < points[0][1]:
+        points = points[::-1]
+    ordered = [replace(first, points=points)]
+    pen = points[0] if first.closed else points[-1]
 
     while remaining:
-        # Closed loops end where they start, so the pen is back at point 0.
-        pen = ordered[-1][0]
-        best_outline, best_index, best_distance = 0, 0, float("inf")
-        for i, outline in enumerate(remaining):
-            distances = np.linalg.norm(outline - pen, axis=1)
-            j = int(np.argmin(distances))
-            if distances[j] < best_distance:
-                best_outline, best_index, best_distance = i, j, distances[j]
-        nxt = remaining.pop(best_outline)
-        ordered.append(rotate_to_start(nxt, best_index))
-
+        entries = [_entry(p, pen) for p in remaining]
+        best = min(range(len(entries)), key=lambda i: entries[i][0])
+        path = remaining.pop(best)
+        points = entries[best][1]
+        ordered.append(replace(path, points=points))
+        # Loops end back where they started; open lines end at their far end.
+        pen = points[0] if path.closed else points[-1]
     return ordered

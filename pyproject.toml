@@ -12,16 +12,28 @@ dependencies = [
     "numpy>=1.26",
     "opencv-python-headless>=4.9",
     "reportlab>=4.0",
+    "scikit-image>=0.22",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "python-multipart>=0.0.9",
+    "pillow>=10",
+    "pillow-heif>=0.16",
+    "rembg>=2.0.50",
+    "onnxruntime>=1.17",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "httpx>=0.27"]
 
 [project.scripts]
 dot2dot = "dot2dot.cli:main"
+dot2dot-web = "dot2dot.web.app:main"
 
 [tool.setuptools.packages.find]
 include = ["dot2dot*"]
+
+[tool.setuptools.package-data]
+"dot2dot.web" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
