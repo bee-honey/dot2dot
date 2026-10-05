@@ -16,6 +16,7 @@ MARGIN = 36  # points; 72 points = 1 inch
 TITLE_SPACE = 40
 LEGEND_SPACE = 20
 LINE_COLOR = HexColor("#d43c3c")
+FILLER_COLOR = HexColor("#8cb4e1")
 
 
 def pdf_bytes(puzzle: Puzzle, title: str = "Connect the Dots") -> bytes:
@@ -59,11 +60,12 @@ def _draw_page(canvas: Canvas, puzzle: Puzzle, title: str, solution: bool) -> No
     radius = DOT_RADIUS * font
 
     if solution:
-        canvas.setStrokeColor(LINE_COLOR)
         canvas.setLineWidth(radius * 0.8)
         canvas.setLineCap(1)  # round
-        for a, b in puzzle.segments():
-            canvas.line(*to_page(a.x, a.y), *to_page(b.x, b.y))
+        for filler, color in ((True, FILLER_COLOR), (False, LINE_COLOR)):
+            canvas.setStrokeColor(color)
+            for a, b in puzzle.segments(filler=filler):
+                canvas.line(*to_page(a.x, a.y), *to_page(b.x, b.y))
 
     canvas.setStrokeColor(black)
     canvas.setLineWidth(radius * 0.5)

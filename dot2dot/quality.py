@@ -20,6 +20,7 @@ import numpy as np
 
 from dot2dot.labels import DIGIT_HEIGHT, DIGIT_WIDTH, DOT_RADIUS
 from dot2dot.models import Path, Puzzle
+from dot2dot.mystery import dot_spread
 from dot2dot.render import label_center
 
 TOLERANCE_FRACTION = 0.012
@@ -41,6 +42,8 @@ class Quality:
     total_dots: int
     # (part name, share traced) for each must-include part from an AI plan.
     parts: tuple[tuple[str, float], ...] = ()
+    # How evenly dots cover the page (1 = even, which hides the picture).
+    spread: float = 0.0
 
     @property
     def parts_coverage(self) -> float | None:
@@ -69,6 +72,7 @@ class Quality:
             f"detail {pct(self.detail_coverage)} | accuracy {pct(self.accuracy)} | "
             f"crowded labels {self.crowded_labels}"
         )
+        text += f" | spread {self.spread:.2f}"
         if self.parts:
             text += "\nParts: " + ", ".join(f"{name} {pct(c)}" for name, c in self.parts)
         return text
@@ -104,6 +108,7 @@ def evaluate(puzzle: Puzzle, reference: list[Path], plan=None) -> Quality:
         crowded_labels=count_crowded_labels(puzzle),
         total_dots=len(puzzle.dots),
         parts=parts,
+        spread=dot_spread(np.array([(d.x, d.y) for d in puzzle.dots]), puzzle.width, puzzle.height),
     )
 
 
@@ -160,7 +165,7 @@ def _reference_masks(puzzle: Puzzle, reference: list[Path], thickness: int = 1):
 
 def _solution_mask(puzzle: Puzzle) -> np.ndarray:
     mask = np.zeros((puzzle.height, puzzle.width), np.uint8)
-    for a, b in puzzle.segments():
+    for a, b in puzzle.segments(filler=False):
         cv2.line(mask, (round(a.x), round(a.y)), (round(b.x), round(b.y)), 255, 1)
     return mask
 
@@ -176,7 +181,7 @@ def _distance_to(mask: np.ndarray) -> np.ndarray:
 def _sample_segments(puzzle: Puzzle, step: float = 2.0) -> np.ndarray:
     """Points every `step` pixels along all solution segments, as integer (x, y)."""
     samples = []
-    for a, b in puzzle.segments():
+    for a, b in puzzle.segments(filler=False):
         count = max(2, int(np.hypot(b.x - a.x, b.y - a.y) / step))
         t = np.linspace(0, 1, count)[:, None]
         samples.append(np.array([a.x, a.y]) * (1 - t) + np.array([b.x, b.y]) * t)

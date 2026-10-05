@@ -22,6 +22,9 @@ class Path:
     # Importance multiplier: a path with weight 3 gets dots as if it were
     # three times as long (used to give faces more detail).
     weight: float = 1.0
+    # Filler: an extra background line added in mystery mode so the dots
+    # spread evenly over the page and don't give the picture away.
+    filler: bool = False
 
     def length(self) -> float:
         steps = np.linalg.norm(np.diff(self.points, axis=0), axis=1).sum()
@@ -57,6 +60,7 @@ class Stroke:
     start: int
     end: int
     closed: bool
+    filler: bool = False
 
 
 @dataclass(frozen=True)
@@ -70,10 +74,15 @@ class Puzzle:
     # Label font size in image pixels; renderers scale it with everything else.
     font_size: float
 
-    def segments(self) -> list[tuple[Dot, Dot]]:
-        """Pairs of dots that should be connected in the solution."""
+    def segments(self, filler: bool | None = None) -> list[tuple[Dot, Dot]]:
+        """Pairs of dots that should be connected in the solution.
+
+        filler=None: all strokes; False: only the picture; True: only filler lines.
+        """
         pairs = []
         for stroke in self.strokes:
+            if filler is not None and stroke.filler != filler:
+                continue
             run = self.dots[stroke.start : stroke.end]
             pairs.extend(zip(run, run[1:]))
             if stroke.closed and len(run) > 2:

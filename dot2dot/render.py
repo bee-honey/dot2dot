@@ -6,6 +6,7 @@ from dot2dot.labels import DIGIT_HEIGHT, DIGIT_WIDTH, DOT_RADIUS, GAP, RING_RADI
 from dot2dot.models import Dot, Puzzle
 
 LINE_COLOR = "#d43c3c"
+FILLER_COLOR = "#8cb4e1"  # background filler lines (mystery mode)
 
 
 def label_center(dot: Dot, font_size: float) -> tuple[float, float]:
@@ -31,11 +32,12 @@ def to_svg(puzzle: Puzzle, solution: bool = False) -> str:
     ]
 
     if solution:
-        for a, b in puzzle.segments():
-            parts.append(
-                f'<line x1="{a.x:.1f}" y1="{a.y:.1f}" x2="{b.x:.1f}" y2="{b.y:.1f}" '
-                f'stroke="{LINE_COLOR}" stroke-width="{radius * 0.8:.2f}" stroke-linecap="round"/>'
-            )
+        for filler, color in ((True, FILLER_COLOR), (False, LINE_COLOR)):
+            for a, b in puzzle.segments(filler=filler):
+                parts.append(
+                    f'<line x1="{a.x:.1f}" y1="{a.y:.1f}" x2="{b.x:.1f}" y2="{b.y:.1f}" '
+                    f'stroke="{color}" stroke-width="{radius * 0.8:.2f}" stroke-linecap="round"/>'
+                )
 
     # A ring marks where a new line starts (lift the pencil before this dot).
     for dot in puzzle.stroke_start_dots():

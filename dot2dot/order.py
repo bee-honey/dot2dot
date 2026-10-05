@@ -52,18 +52,28 @@ def _entry(path: Path, pen: np.ndarray) -> tuple[float, np.ndarray]:
     return (to_first, points) if to_first <= to_last else (to_last, points[::-1])
 
 
-def order_paths(paths: list[Path]) -> list[Path]:
-    """Return paths in drawing order, each re-ordered to start at its first dot."""
-    remaining = [replace(p, points=make_clockwise(p.points)) if p.closed else p for p in paths]
+def order_paths(paths: list[Path], start_at: np.ndarray | None = None) -> list[Path]:
+    """Return paths in drawing order, each re-ordered to start at its first dot.
 
-    first = remaining.pop(max(range(len(remaining)), key=lambda i: (remaining[i].essential, remaining[i].length())))
-    points = first.points
-    if first.closed:
-        points = rotate_to_start(points, topmost_index(points))
-    elif points[-1][1] < points[0][1]:
-        points = points[::-1]
-    ordered = [replace(first, points=points)]
-    pen = points[0] if first.closed else points[-1]
+    By default drawing starts on the main path. With `start_at` (a point), it
+    starts at whatever path is nearest that point instead.
+    """
+    remaining = [replace(p, points=make_clockwise(p.points)) if p.closed else p for p in paths]
+    if not remaining:
+        return []
+
+    if start_at is not None:
+        ordered: list[Path] = []
+        pen = np.asarray(start_at, dtype=float)
+    else:
+        first = remaining.pop(max(range(len(remaining)), key=lambda i: (remaining[i].essential, remaining[i].length())))
+        points = first.points
+        if first.closed:
+            points = rotate_to_start(points, topmost_index(points))
+        elif points[-1][1] < points[0][1]:
+            points = points[::-1]
+        ordered = [replace(first, points=points)]
+        pen = points[0] if first.closed else points[-1]
 
     while remaining:
         entries = [_entry(p, pen) for p in remaining]

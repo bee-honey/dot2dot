@@ -307,6 +307,22 @@ give a `(16, M, 2)` grid of differences, with no nested loops.
 - **Model choice was measured, not guessed**: three models on the same
   samples, comparing box accuracy and latency (see `scripts/eval_samples.py --ai`).
 
+### Mystery mode + AI judge: `mystery.py`, `judge.py`
+- **Two-sided objective**: the puzzle should be unrecognizable *before*
+  solving and recognizable *after*. The judge measures both with blind
+  guesses; `mystery_score = P(right after) * (1 - P(right before))`.
+- **The LLM as an evaluator, not a generator**: it never draws anything.
+  It answers "what is this?", and the code searches settings to maximize
+  the score (`tune_mystery`, a tiny search loop over levels).
+- `temperature=0` makes the judge deterministic. Without it, the same puzzle
+  got different verdicts on different runs, which made comparisons
+  meaningless. Measure your measuring tool before trusting it.
+- `ThreadPoolExecutor.map` runs the independent API calls in parallel
+  (like an `ExecutorService` + `invokeAll` in Java). The calls wait on the
+  network, so threads help even with Python's GIL.
+- `numpy.random.default_rng(seed)`, seeded from the image, makes filler
+  strokes reproducible: same picture, same puzzle.
+
 ### A dataclass gotcha
 `@dataclass` generates `__eq__` comparing every field. With a NumPy array
 field, `a == b` returns an array, not a bool, so `path in paths` raises an

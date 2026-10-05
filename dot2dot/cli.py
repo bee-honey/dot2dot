@@ -26,6 +26,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "photo: real photos and busy backgrounds; outline: just the border",
     )
     parser.add_argument("--ai", action="store_true", help="use the AI planner (needs OPENAI_API_KEY in .env)")
+    parser.add_argument(
+        "--mystery", choices=["0", "1", "2", "auto"], default="0",
+        help="hide the picture until solved: 0 off, 1 some, 2 lots, auto = AI picks (default: 0)",
+    )
+    parser.add_argument("--guess-test", action="store_true", help="ask the AI what it sees before/after solving")
     parser.add_argument("--request", default="", help='instructions for the AI planner, e.g. "easy, for a 5-year-old"')
     parser.add_argument(
         "--max-lines",
@@ -60,7 +65,30 @@ def main(argv: list[str] | None = None) -> int:
             print(f"AI plan: {plan.subject} ({plan.image_kind}); suggests {plan.suggested_dots} dots; "
                   f"must include: {', '.join(p.name for p in plan.must_include) or '-'}")
         max_paths = args.max_lines or (1 if args.style == "outline" else None)
-        result = build(args.image, num_dots=args.dots, max_paths=max_paths, style=args.style, plan=plan)
+        from dot2dot.preprocess import load_image as _load
+
+        picture = _load(args.image)
+
+        def build_at(level: int):
+            return build(picture, num_dots=args.dots, max_paths=max_paths, style=args.style, plan=plan, mystery_level=level)
+
+        test = None
+        if args.mystery == "auto" or args.guess_test:
+            from dot2dot.judge import OpenAIJudge, run_guess_test, tune_mystery
+            from dot2dot.raster import render
+
+            judge = OpenAIJudge()
+        if args.mystery == "auto":
+            best, tried = tune_mystery(judge, picture, build_at)
+            for c in tried:
+                print(f"  mystery level {c.level}: {c.test.verdict} (score {c.test.mystery_score:.2f}; "
+                      f"before: {c.test.before.label}, after: {c.test.after.label})")
+            result, test = best.result, best.test
+            print(f"Auto-tune picked mystery level {best.level}")
+        else:
+            result = build_at(int(args.mystery))
+            if args.guess_test:
+                test = run_guess_test(judge, picture, render(result.puzzle), render(result.puzzle, solution=True))
     except (FileNotFoundError, ValueError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -70,6 +98,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Wrote {out} ({len(puzzle.dots)} dots, {len(puzzle.strokes)} lines)")
     print(f"Style: {result.style}")
     print(evaluate(puzzle, result.reference, result.plan).summary())
+    if test is not None:
+        mark = lambda ok: "right" if ok else "wrong"
+        print(f"Guess test ({test.verdict}): truth '{test.truth}'; before solving: '{test.before.label}' "
+              f"({mark(test.before_correct)}); after: '{test.after.label}' ({mark(test.after_correct)})")
 
     if args.svg:
         for name, solution in [("puzzle", False), ("solution", True)]:

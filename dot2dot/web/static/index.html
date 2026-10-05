@@ -134,6 +134,13 @@
   .plan p { margin: 4px 0; font-size: 13px; color: var(--muted); }
   .parts { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
   .part { font-size: 12px; padding: 4px 9px; border-radius: 999px; color: #fff; }
+  .guess { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  .guess .cell { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+  .guess .k { font-size: 12px; color: var(--muted); }
+  .guess .v { font-size: 17px; font-weight: 650; margin-top: 2px; }
+  .badge { display: inline-block; font-size: 13px; font-weight: 700; padding: 4px 10px; border-radius: 999px; color: #fff; }
+  .tried { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .tried b { color: var(--ink); }
   .note { font-size: 13px; padding: 8px 12px; border-radius: 8px; background: #fff4e0; color: #7a5200; }
   details.check summary { cursor: pointer; font-weight: 600; font-size: 14px; }
   details.check .legend { color: var(--muted); font-size: 12px; margin: 8px 0; }
@@ -181,6 +188,16 @@
         <span class="hint">Kids ≈ 30–60 · Normal ≈ 80–150 · Expert ≈ 200–400</span>
       </label>
 
+      <label class="field">Mystery
+        <select id="mystery">
+          <option value="0">Off: faithful picture</option>
+          <option value="1">Some: hide the shape with background lines</option>
+          <option value="2">Lots: even harder to guess</option>
+          <option value="auto" disabled>Auto: AI tries levels, keeps the best (needs AI)</option>
+        </select>
+        <span class="hint">Adds light background lines so the dots don't give the picture away. Kids find out what it is by connecting them.</span>
+      </label>
+
       <label class="field">Max separate lines <span class="hint">(optional)</span>
         <input id="max-lines" type="number" min="1" placeholder="no limit">
       </label>
@@ -193,6 +210,8 @@
         <label class="ai-toggle"><input id="ai" type="checkbox"> Use AI planner</label>
         <span class="hint" id="ai-hint">An AI model looks at the picture first: what must appear (eyes, beak, feet…) and what to ignore (captions, logos). Adds a few seconds.</span>
         <textarea id="request" placeholder="Optional instructions, e.g. &quot;easy puzzle for a 5-year-old&quot;"></textarea>
+        <label class="ai-toggle"><input id="guess-test" type="checkbox"> Run AI guess test</label>
+        <span class="hint">The AI looks at the unsolved page, then the answer key, and says what it sees in each. A good mystery puzzle fools it before solving.</span>
       </div>
 
       <button id="go" class="primary" type="submit" disabled>Generate puzzle</button>
@@ -229,12 +248,24 @@
           <div class="panel-body" id="puzzle"></div>
         </div>
         <div class="card panel">
-          <div class="panel-head">Answer key <a href="#" data-open="solution">open full size</a></div>
+          <div class="panel-head">Answer key <span class="hint" id="filler-legend" style="display:none">blue = background lines</span> <a href="#" data-open="solution">open full size</a></div>
           <div class="panel-body" id="solution"></div>
         </div>
       </div>
 
       <div class="note" id="ai-note" style="display:none"></div>
+
+      <div class="card" id="guess" style="display:none">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <b>AI guess test</b> <span class="badge" id="verdict"></span>
+        </div>
+        <div class="guess">
+          <div class="cell"><div class="k">The picture is</div><div class="v" id="g-truth"></div></div>
+          <div class="cell"><div class="k">Before solving, AI guessed</div><div class="v" id="g-before"></div></div>
+          <div class="cell"><div class="k">After solving, AI guessed</div><div class="v" id="g-after"></div></div>
+        </div>
+        <div class="tried" id="tried"></div>
+      </div>
 
       <div class="card plan" id="plan" style="display:none">
         <img id="plan-img" alt="AI plan">
@@ -281,6 +312,7 @@ updateHint();
 fetch("/api/config").then((r) => r.json()).then((cfg) => {
   if (!cfg.ai_available) return;
   $("ai-box").classList.add("available");
+  $("mystery").querySelector('option[value="auto"]').disabled = false;
   $("ai-hint").textContent += ` Model: ${cfg.ai_model}.`;
 }).catch(() => {});
 
@@ -327,9 +359,14 @@ $("form").addEventListener("submit", async (e) => {
     body.append("ai", "true");
     body.append("request", $("request").value);
   }
+  body.append("mystery", $("mystery").value);
+  if ($("guess-test").checked) body.append("guess_test", "true");
 
   go.disabled = true;
-  setStatus($("ai").checked ? "Asking the AI planner, then generating…" : "Generating…", false, true);
+  const busy = $("mystery").value === "auto"
+    ? "Trying mystery levels and asking the AI to guess each (about 15 s)…"
+    : $("ai").checked || $("guess-test").checked ? "Generating and asking the AI…" : "Generating…";
+  setStatus(busy, false, true);
   const started = performance.now();
   try {
     const response = await fetch("/api/puzzles", { method: "POST", body });
@@ -371,7 +408,25 @@ function showResult(data) {
   $("q-crowded").textContent = q.crowded_labels;
   $("counts").textContent = `${data.dots} dots · ${data.lines} line${data.lines === 1 ? "" : "s"}`;
   $("pdf").href = data.pdf_url;
-  $("style-used").textContent = data.style;
+  $("style-used").textContent = data.style + (data.mystery_level ? ` · mystery ${data.mystery_level}` : "");
+  $("filler-legend").style.display = data.mystery_level ? "inline" : "none";
+
+  const test = data.guess_test;
+  $("guess").style.display = test ? "block" : "none";
+  if (test) {
+    const colors = { "mystery": "var(--good)", "too easy": "var(--warn)", "unrecognizable": "var(--bad)" };
+    const labels = { "mystery": "Mystery: hidden until solved", "too easy": "Too easy: guessable from the dots", "unrecognizable": "Unrecognizable even when solved" };
+    $("verdict").textContent = labels[test.verdict];
+    $("verdict").style.background = colors[test.verdict];
+    const show = (g, ok) => `${g.label} ${ok ? "✓" : "✗"} <span class="hint">(${Math.round(g.confidence * 100)}% sure)</span>`;
+    $("g-truth").textContent = test.truth;
+    $("g-before").innerHTML = show(test.before, test.before_correct);
+    $("g-after").innerHTML = show(test.after, test.after_correct);
+    $("tried").innerHTML = data.candidates.length
+      ? "Auto-tune tried: " + data.candidates.map((c) =>
+          `<b>level ${c.level}</b> ${c.verdict} (before "${c.before}", after "${c.after}")`).join(" · ")
+      : "";
+  }
 
   $("ai-note").style.display = data.ai_error ? "block" : "none";
   $("ai-note").textContent = data.ai_error || "";

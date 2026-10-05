@@ -20,7 +20,9 @@ from dot2dot import config
 from dot2dot.guidance import plan_overlay
 from dot2dot.pdf import pdf_bytes
 from dot2dot.pipeline import STYLES, build
+from dot2dot.judge import OpenAIJudge, run_guess_test, tune_mystery
 from dot2dot.planner import DEFAULT_OPENAI_MODEL, OpenAIPlanner
+from dot2dot.raster import render
 from dot2dot.preprocess import decode_image
 from dot2dot.quality import coverage_image, evaluate
 from dot2dot.render import to_svg
@@ -40,12 +42,36 @@ class PartOut(BaseModel):
     coverage: float
 
 
+class GuessOut(BaseModel):
+    label: str
+    confidence: float
+
+
+class GuessTestOut(BaseModel):
+    truth: str
+    before: GuessOut
+    after: GuessOut
+    before_correct: bool
+    after_correct: bool
+    mystery_score: float
+    verdict: str  # mystery | too easy | unrecognizable
+
+
+class CandidateOut(BaseModel):
+    level: int
+    verdict: str
+    mystery_score: float
+    before: str
+    after: str
+
+
 class QualityOut(BaseModel):
     overall: float
     outline_coverage: float | None
     detail_coverage: float | None
     accuracy: float
     crowded_labels: int
+    spread: float = 0.0
     parts: list[PartOut] = []
 
 
@@ -70,7 +96,10 @@ class PuzzleOut(BaseModel):
     quality: QualityOut
     pdf_url: str
     plan: PlanOut | None = None
-    ai_error: str | None = None  # set when the planner failed and we carried on without it
+    ai_error: str | None = None  # set when an AI step failed and we carried on without it
+    mystery_level: int = 0
+    guess_test: GuessTestOut | None = None
+    candidates: list[CandidateOut] = []  # what auto-tune tried
 
 
 class ConfigOut(BaseModel):
@@ -100,6 +129,27 @@ class _PdfCache:
 
 pdfs = _PdfCache(CACHE_SIZE)
 _planner: OpenAIPlanner | None = None
+_judge: OpenAIJudge | None = None
+
+
+def get_judge() -> OpenAIJudge | None:
+    """The shared AI judge for the guess test, or None without an API key."""
+    global _judge
+    if _judge is None and config.openai_api_key():
+        _judge = OpenAIJudge()
+    return _judge
+
+
+def _guess_test_out(test) -> GuessTestOut:
+    return GuessTestOut(
+        truth=test.truth,
+        before=GuessOut(label=test.before.label, confidence=test.before.confidence),
+        after=GuessOut(label=test.after.label, confidence=test.after.confidence),
+        before_correct=test.before_correct,
+        after_correct=test.after_correct,
+        mystery_score=test.mystery_score,
+        verdict=test.verdict,
+    )
 
 
 def get_planner() -> OpenAIPlanner | None:
@@ -137,11 +187,15 @@ def create_puzzle(
     title: str = Form("Connect the Dots"),
     ai: bool = Form(False),
     request: str = Form(""),
+    mystery: str = Form("0"),  # "0", "1", "2" or "auto" (AI picks the level)
+    guess_test: bool = Form(False),
 ) -> PuzzleOut:
     if style not in STYLES:
         raise HTTPException(400, f"style must be one of: {', '.join(STYLES)}")
     if not MIN_DOTS <= dots <= MAX_DOTS:
         raise HTTPException(400, f"dots must be between {MIN_DOTS} and {MAX_DOTS}")
+    if mystery not in ("0", "1", "2", "auto"):
+        raise HTTPException(400, "mystery must be 0, 1, 2 or auto")
 
     data = image.file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
@@ -163,9 +217,36 @@ def create_puzzle(
             except Exception as error:  # network, quota, bad response: carry on without AI
                 ai_error = f"AI planner failed, made the puzzle without it ({type(error).__name__}: {error})"[:300]
 
+    max_paths = max_lines or (1 if style == "outline" else None)
+
+    def build_at(level: int):
+        return build(picture, num_dots=dots, max_paths=max_paths, style=style, plan=plan, mystery_level=level)
+
+    test, candidates = None, []
+    judge = get_judge() if (guess_test or mystery == "auto") else None
+    if (guess_test or mystery == "auto") and judge is None:
+        ai_error = "AI guess test unavailable: set OPENAI_API_KEY in .env"
     try:
-        max_paths = max_lines or (1 if style == "outline" else None)
-        result = build(picture, num_dots=dots, max_paths=max_paths, style=style, plan=plan)
+        if mystery == "auto" and judge is not None:
+            try:
+                best, tried = tune_mystery(judge, picture, build_at)
+                result, level, test = best.result, best.level, best.test
+                candidates = [
+                    CandidateOut(level=c.level, verdict=c.test.verdict, mystery_score=c.test.mystery_score,
+                                 before=c.test.before.label, after=c.test.after.label)
+                    for c in tried
+                ]
+            except Exception as error:  # AI failure: fall back to a fixed level
+                ai_error = f"Auto-tune failed, used level 1 ({type(error).__name__}: {error})"[:300]
+                result, level = build_at(1), 1
+        else:
+            level = 1 if mystery == "auto" else int(mystery)
+            result = build_at(level)
+            if guess_test and judge is not None:
+                try:
+                    test = run_guess_test(judge, picture, render(result.puzzle), render(result.puzzle, solution=True))
+                except Exception as error:
+                    ai_error = f"Guess test failed ({type(error).__name__}: {error})"[:300]
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
 
@@ -204,11 +285,15 @@ def create_puzzle(
             detail_coverage=quality.detail_coverage,
             accuracy=quality.accuracy,
             crowded_labels=quality.crowded_labels,
+            spread=quality.spread,
             parts=[PartOut(name=name, coverage=c) for name, c in quality.parts],
         ),
         pdf_url=f"/api/puzzles/{puzzle_id}/pdf",
         plan=plan_out,
         ai_error=ai_error,
+        mystery_level=level,
+        guess_test=_guess_test_out(test) if test else None,
+        candidates=candidates,
     )
 
 

@@ -122,6 +122,9 @@ dot2dot/
 │   ├── labels.py         # collision-aware number placement
 │   ├── quality.py        # coverage/accuracy/part score + check image
 │   ├── planner.py        # AI planner (OpenAI vision → structured plan)
+│   ├── judge.py          # AI guess test + mystery auto-tune
+│   ├── mystery.py        # filler strokes, reveal order, dot spread
+│   ├── raster.py         # render puzzles as images (for the judge, grids)
 │   ├── guidance.py       # applies a plan: ignore, weight parts, repair
 │   ├── config.py         # settings from environment / .env
 │   ├── render.py         # SVG output (puzzle + solution)
@@ -231,7 +234,10 @@ In multi-line puzzles, a **ringed dot** marks the start of a new line: lift the 
 ### Phase 4 — AI-assisted
 - [x] AI planner: subject, must-include parts, ignore regions, suggested dots (`--ai`)
 - [x] Automatic style selection (`--style auto`)
-- [ ] AI reviewer: a vision model scores the finished puzzle and triggers a retry with adjusted settings
+- [x] AI guess test: is the picture hidden before solving and clear after?
+- [x] Mystery mode with AI auto-tune (`--mystery auto`)
+- [ ] Local judge with CLIP (free, offline), compared against the LLM judge
+- [ ] Dataset (Quick, Draw!) + distill the judge into a small trained model
 - [x] Subject classification via the planner (coloring page / cartoon / photo / render)
   - Portrait: face outline, hair silhouette, key facial features
   - Animal: silhouette + major features
@@ -246,6 +252,36 @@ In multi-line puzzles, a **ringed dot** marks the start of a new line: lift the 
 - [ ] Web / iOS front end
 
 ---
+
+## Mystery mode
+
+A puzzle is more fun when you can't tell what it is until you connect the
+dots. Normal dot puzzles give it away: dots crowd along the outline and the
+rest of the page is empty. Mystery mode adds light **background filler
+lines**, numbered like everything else, so dots cover the page evenly, and
+it numbers small give-away features (eyes) last.
+
+| Level | What it does |
+|-------|--------------|
+| 0 | Off: faithful picture |
+| 1 | Filler lines in the background |
+| 2 | More fillers, also in empty areas inside the subject; eyes get fewer dots |
+| auto | Tries 2, 1 and 0, runs the AI guess test on each, keeps the most mysterious one that's still recognizable once solved |
+
+**AI guess test**: a vision model sees the unsolved page, then the answer
+key, with no hints, and says what it sees. Verdicts: *mystery* (fooled
+before, right after), *too easy* (guessed before solving), *unrecognizable*
+(wrong even after). Turn it on in the web app, or:
+
+```bash
+dot2dot penguin.jpg --dots 200 --mystery auto           # AI picks the level
+dot2dot penguin.jpg --dots 200 --mystery 2 --guess-test
+python scripts/eval_samples.py --styles auto --mystery 0 1 2 --judge --dots 200
+```
+
+On the sample set: without mystery mode, 4 of 8 puzzles were guessable from
+the dots alone; auto-tune turns most into mysteries, and falls back to level 0
+when fillers would make the subject unrecognizable (the Hulk coloring page).
 
 ## AI planner (optional)
 

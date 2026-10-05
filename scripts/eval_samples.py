@@ -7,6 +7,7 @@ the grid (and the printed scores) with the previous run.
     python scripts/eval_samples.py --styles lineart photo --dots 150
     python scripts/eval_samples.py --out output/eval/after.png
     python scripts/eval_samples.py --styles auto --ai     # also run with the AI planner
+    python scripts/eval_samples.py --styles auto --mystery 0 1 2 --judge   # AI guess test per level
 """
 
 import argparse
@@ -20,6 +21,8 @@ import numpy as np
 from dot2dot.models import Puzzle
 from dot2dot.pipeline import STYLES, build
 from dot2dot.guidance import plan_overlay
+from dot2dot.judge import OpenAIJudge, run_guess_test
+from dot2dot.raster import render
 from dot2dot.planner import OpenAIPlanner
 from dot2dot.preprocess import load_image
 from dot2dot.quality import evaluate
@@ -62,8 +65,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dots", type=int, default=150)
     parser.add_argument("--out", type=Path, default=Path("output/eval/grid.png"))
     parser.add_argument("--ai", action="store_true", help="add a column per style using the AI planner")
+    parser.add_argument("--mystery", nargs="+", type=int, default=[0], help="mystery levels to run (0 1 2)")
+    parser.add_argument("--judge", action="store_true", help="run the AI guess test on every puzzle")
     args = parser.parse_args(argv)
     planner = OpenAIPlanner() if args.ai else None
+    judge = OpenAIJudge() if args.judge else None
+    verdicts: dict[str, int] = {}
 
     images = sorted(p for p in args.samples.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".heic", ".webp"})
     if not images:
@@ -78,11 +85,13 @@ def main(argv: list[str] | None = None) -> int:
         if plan:
             row.append(tile(plan_overlay(image, plan), f"plan: {plan.subject}", f"{plan.image_kind}, {plan.style}, {plan.suggested_dots} dots"))
         runs = [(style, None) for style in args.styles] + ([(style, plan) for style in args.styles] if plan else [])
-        for style, run_plan in runs:
-            label = style + (" + AI" if run_plan else "")
+        runs = [(style, run_plan, level) for style, run_plan in runs for level in args.mystery]
+        for style, run_plan, level in runs:
+            label = style + (" + AI" if run_plan else "") + (f" m{level}" if level else "")
             started = time.perf_counter()
             try:
-                result = build(image, num_dots=args.dots, max_paths=1 if style == "outline" else None, style=style, plan=run_plan)
+                result = build(image, num_dots=args.dots, max_paths=1 if style == "outline" else None,
+                               style=style, plan=run_plan, mystery_level=level)
                 quality = evaluate(result.puzzle, result.reference, run_plan)
                 seconds = time.perf_counter() - started
                 summary = f"{label} ({result.style}): {quality.overall:.0f}/100, {len(result.puzzle.dots)} dots"
@@ -90,13 +99,21 @@ def main(argv: list[str] | None = None) -> int:
                 if quality.parts:
                     missing = [name for name, c in quality.parts if c < 0.5]
                     detail += f", missing: {', '.join(missing) or 'none'}"
-                row.append(tile(render_solution(result.puzzle), summary, detail))
+                if judge:
+                    test = run_guess_test(judge, image, render(result.puzzle), render(result.puzzle, solution=True))
+                    verdicts[test.verdict] = verdicts.get(test.verdict, 0) + 1
+                    summary = f"{label}: {test.verdict.upper()} ({test.mystery_score:.2f})"
+                    detail = f"before: {test.before.label} | after: {test.after.label}"
+                    row.append(tile(render(result.puzzle, TILE, numbers=False), summary, "unsolved (numbers hidden)"))
+                row.append(tile(render(result.puzzle, TILE, solution=True, numbers=False), summary, detail))
             except Exception as error:  # keep going: one bad sample shouldn't stop the run
                 summary = f"{label}: FAILED"
                 row.append(tile(np.full((TILE, TILE, 3), 245, np.uint8), summary, str(error)))
             print(f"{path.name:<40} {summary}")
         rows.append(np.hstack(row))
 
+    if verdicts:
+        print("Verdicts:", ", ".join(f"{k}: {v}" for k, v in sorted(verdicts.items())))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(args.out), np.vstack(rows))
     print(f"Wrote {args.out}")

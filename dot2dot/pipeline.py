@@ -5,7 +5,7 @@ from pathlib import Path as FilePath
 
 import numpy as np
 
-from dot2dot import lineart, photo
+from dot2dot import lineart, mystery, photo
 from dot2dot.contours import find_outlines, make_mask
 from dot2dot.guidance import apply_plan
 from dot2dot.labels import choose_font_size, outward_normals, place_labels
@@ -79,16 +79,19 @@ def build(
     max_paths: int | None = 1,
     style: str = "outline",
     plan: Plan | None = None,
+    mystery_level: int = 0,
 ) -> Result:
     """Like `generate`, but also returns the reference paths for quality checks.
 
     With a `plan` (from the AI planner), ignored regions are dropped,
     must-include parts get extra dots, and missing parts are repaired.
+    With `mystery_level` 1-2, filler strokes hide the picture until solved.
     """
     if style not in STYLES:
         raise ValueError(f"Unknown style {style!r}; choose from {', '.join(STYLES)}")
     if not isinstance(image, np.ndarray):
         image = load_image(image)
+    seed = image.tobytes()[:: max(1, image.size // 4096)]  # cheap image fingerprint
     if style == "auto":
         style = choose_style(image, plan)
     image = resize(image, WORKING_SIZE[style])
@@ -106,16 +109,33 @@ def build(
         num_dots = readable
         paths = select_paths(reference, num_dots, max_paths)
 
+    if mystery_level:
+        if mystery_level >= 2:
+            spacing = sum(p.length() for p in paths) / num_dots
+            paths = [replace(p, weight=p.weight * mystery.FEATURE_WEIGHT) if mystery.is_feature(p, spacing) else p
+                     for p in paths]
+        paths = paths + mystery.add_fillers(paths, image.shape, num_dots, mystery_level, seed)
+
     counts = allocate_dots(paths, num_dots)
     simplified = [replace(p, points=simplify(p, n)) for p, n in zip(paths, counts)]
-    ordered = declutter(order_paths(simplified), max(width, height))
+    if mystery_level:
+        # Start in the page corner, and save small give-away loops (eyes) for last.
+        spacing = sum(p.length() for p in paths) / num_dots
+        features = [p for p in simplified if mystery.is_feature(p, spacing)]
+        rest = [p for p in simplified if not mystery.is_feature(p, spacing)]
+        ordered = order_paths(rest, start_at=np.array([0.0, 0.0]))
+        pen = ordered[-1].points[0 if ordered[-1].closed else -1] if ordered else np.zeros(2)
+        ordered += order_paths(features, start_at=pen)
+    else:
+        ordered = order_paths(simplified)
+    ordered = declutter(ordered, max(width, height))
 
     # Flatten the ordered paths into one numbered list of dots.
     points = np.concatenate([p.points for p in ordered])
     strokes, preferred = [], []
     for path in ordered:
         start = sum(s.end - s.start for s in strokes)
-        strokes.append(Stroke(start, start + len(path.points), path.closed))
+        strokes.append(Stroke(start, start + len(path.points), path.closed, path.filler))
         preferred.append(outward_normals(path.points) if path.closed else np.zeros_like(path.points))
 
     numbers = list(range(1, len(points) + 1))
