@@ -122,7 +122,9 @@ dot2dot/
 │   ├── labels.py         # collision-aware number placement
 │   ├── quality.py        # coverage/accuracy/part score + check image
 │   ├── planner.py        # AI planner (OpenAI vision → structured plan)
-│   ├── judge.py          # AI guess test + mystery auto-tune
+│   ├── judge.py          # guess test + mystery auto-tune (OpenAI judge)
+│   ├── clip_judge.py     # local CLIP judge (free, offline)
+│   ├── data/             # Quick, Draw! category names (CLIP vocabulary)
 │   ├── mystery.py        # filler strokes, reveal order, dot spread
 │   ├── raster.py         # render puzzles as images (for the judge, grids)
 │   ├── guidance.py       # applies a plan: ignore, weight parts, repair
@@ -136,7 +138,7 @@ dot2dot/
 │   │   └── static/index.html  # single-page UI
 │   └── __main__.py       # `python -m dot2dot`
 ├── samples/              # sample images + generator script (private/ is git-ignored)
-├── scripts/              # eval_samples.py: visual regression grid
+├── scripts/              # eval_samples.py (visual grid), compare_judges.py (CLIP vs LLM)
 ├── tests/
 ├── docs/
 ├── pyproject.toml
@@ -236,7 +238,7 @@ In multi-line puzzles, a **ringed dot** marks the start of a new line: lift the 
 - [x] Automatic style selection (`--style auto`)
 - [x] AI guess test: is the picture hidden before solving and clear after?
 - [x] Mystery mode with AI auto-tune (`--mystery auto`)
-- [ ] Local judge with CLIP (free, offline), compared against the LLM judge
+- [x] Local judge with CLIP (free, offline): 79% verdict agreement with the LLM judge, ~60x faster
 - [ ] Dataset (Quick, Draw!) + distill the judge into a small trained model
 - [x] Subject classification via the planner (coloring page / cartoon / photo / render)
   - Portrait: face outline, hair silhouette, key facial features
@@ -268,13 +270,22 @@ it numbers small give-away features (eyes) last.
 | 2 | More fillers, also in empty areas inside the subject; eyes get fewer dots |
 | auto | Tries 2, 1 and 0, runs the AI guess test on each, keeps the most mysterious one that's still recognizable once solved |
 
-**AI guess test**: a vision model sees the unsolved page, then the answer
-key, with no hints, and says what it sees. Verdicts: *mystery* (fooled
+**Guess test**: a judge sees the unsolved page, then the answer key, with
+no hints, and says what it sees. Two judges:
+
+| Judge | Cost | Speed | Agreement with OpenAI judge |
+|-------|------|-------|-----------------------------|
+| `clip` (default): local CLIP model, picks from 354 categories | free, offline | ~50 ms | 79% verdicts (92% "guessable before", 88% "recognizable after") |
+| `openai`: vision LLM, names anything | ~1¢ | ~3 s | n/a |
+
+Install the local judge with `pip install -e ".[clip]"` (PyTorch, ~600 MB model
+downloaded on first use). Compare the judges with `python scripts/compare_judges.py`. Verdicts: *mystery* (fooled
 before, right after), *too easy* (guessed before solving), *unrecognizable*
 (wrong even after). Turn it on in the web app, or:
 
 ```bash
-dot2dot penguin.jpg --dots 200 --mystery auto           # AI picks the level
+dot2dot penguin.jpg --dots 200 --mystery auto           # a judge picks the level (local CLIP)
+dot2dot penguin.jpg --dots 200 --mystery auto --judge openai
 dot2dot penguin.jpg --dots 200 --mystery 2 --guess-test
 python scripts/eval_samples.py --styles auto --mystery 0 1 2 --judge --dots 200
 ```

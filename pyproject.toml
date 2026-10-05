@@ -26,6 +26,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "httpx>=0.27"]
+# Local CLIP judge (free, offline guess test). Large: PyTorch + a ~600 MB model.
+clip = ["torch>=2.2", "open_clip_torch>=2.24"]
 
 [project.scripts]
 dot2dot = "dot2dot.cli:main"
@@ -36,6 +38,7 @@ include = ["dot2dot*"]
 
 [tool.setuptools.package-data]
 "dot2dot.web" = ["static/*"]
+"dot2dot" = ["data/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

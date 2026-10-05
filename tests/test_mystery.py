@@ -96,7 +96,7 @@ def upload(client, path, **form):
 
 
 def test_web_mystery_and_guess_test(client, square_image, monkeypatch):
-    monkeypatch.setattr(web, "get_judge", lambda: ScriptedJudge(["blob", "square", "square"]))
+    monkeypatch.setattr(web, "get_judge", lambda kind="clip": ScriptedJudge(["blob", "square", "square"]))
     body = upload(client, square_image, dots="40", mystery="1", guess_test="true").json()
     assert body["mystery_level"] == 1
     assert body["guess_test"]["verdict"] == "mystery"
@@ -105,7 +105,31 @@ def test_web_mystery_and_guess_test(client, square_image, monkeypatch):
 
 def test_web_auto_mystery_reports_candidates(client, square_image, monkeypatch):
     judge = ScriptedJudge(["square", "blob", "square", "blob", "square", "square", "square"])
-    monkeypatch.setattr(web, "get_judge", lambda: judge)
+    monkeypatch.setattr(web, "get_judge", lambda kind="clip": judge)
     body = upload(client, square_image, dots="40", mystery="auto").json()
     assert [c["level"] for c in body["candidates"]] == [2, 1, 0]
     assert body["mystery_level"] == 2  # first mystery wins the tie
+
+
+def test_web_passes_judge_choice(client, square_image, monkeypatch):
+    asked = []
+
+    def fake_get_judge(kind="clip"):
+        asked.append(kind)
+        return ScriptedJudge(["blob", "square", "square"])
+
+    monkeypatch.setattr(web, "get_judge", fake_get_judge)
+    body = upload(client, square_image, dots="40", guess_test="true", judge="openai").json()
+    assert asked == ["openai"] and body["judge"] == "openai"
+
+
+def test_clip_judge_reads_answer_keys_without_numbers(square_image):
+    from dot2dot.judge import judge_images
+
+    class NoNumbers:
+        answer_key_numbers = False
+
+    puzzle = build(square_image, 20, None, "lineart").puzzle
+    page, plain_key = judge_images(NoNumbers(), puzzle)
+    _, numbered_key = judge_images(object(), puzzle)
+    assert (plain_key != numbered_key).any()  # numbers left off for CLIP

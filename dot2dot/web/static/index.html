@@ -193,7 +193,7 @@
           <option value="0">Off: faithful picture</option>
           <option value="1">Some: hide the shape with background lines</option>
           <option value="2">Lots: even harder to guess</option>
-          <option value="auto" disabled>Auto: AI tries levels, keeps the best (needs AI)</option>
+          <option value="auto" disabled>Auto: tries levels, a judge keeps the best</option>
         </select>
         <span class="hint">Adds light background lines so the dots don't give the picture away. Kids find out what it is by connecting them.</span>
       </label>
@@ -210,8 +210,17 @@
         <label class="ai-toggle"><input id="ai" type="checkbox"> Use AI planner</label>
         <span class="hint" id="ai-hint">An AI model looks at the picture first: what must appear (eyes, beak, feet…) and what to ignore (captions, logos). Adds a few seconds.</span>
         <textarea id="request" placeholder="Optional instructions, e.g. &quot;easy puzzle for a 5-year-old&quot;"></textarea>
-        <label class="ai-toggle"><input id="guess-test" type="checkbox"> Run AI guess test</label>
-        <span class="hint">The AI looks at the unsolved page, then the answer key, and says what it sees in each. A good mystery puzzle fools it before solving.</span>
+      </div>
+
+      <div class="ai-box" id="judge-box">
+        <label class="ai-toggle"><input id="guess-test" type="checkbox"> Run guess test</label>
+        <span class="hint">A judge looks at the unsolved page, then the answer key, and says what it sees in each. A good mystery puzzle fools it before solving. Also used by Mystery: Auto.</span>
+        <label class="field">Judge
+          <select id="judge">
+            <option value="clip">Local CLIP: free, instant</option>
+            <option value="openai" disabled>OpenAI: more accurate, ~3 s per test</option>
+          </select>
+        </label>
       </div>
 
       <button id="go" class="primary" type="submit" disabled>Generate puzzle</button>
@@ -257,7 +266,7 @@
 
       <div class="card" id="guess" style="display:none">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-          <b>AI guess test</b> <span class="badge" id="verdict"></span>
+          <b>Guess test</b> <span class="badge" id="verdict"></span> <span class="hint" id="judge-used"></span>
         </div>
         <div class="guess">
           <div class="cell"><div class="k">The picture is</div><div class="v" id="g-truth"></div></div>
@@ -310,9 +319,14 @@ updateHint();
 
 // Show the AI controls only when the server has an API key configured.
 fetch("/api/config").then((r) => r.json()).then((cfg) => {
+  if (cfg.clip_available || cfg.ai_available) {
+    $("judge-box").classList.add("available");
+    $("mystery").querySelector('option[value="auto"]').disabled = false;
+  }
+  if (cfg.ai_available) $("judge").querySelector('option[value="openai"]').disabled = false;
+  if (!cfg.clip_available && cfg.ai_available) $("judge").value = "openai";
   if (!cfg.ai_available) return;
   $("ai-box").classList.add("available");
-  $("mystery").querySelector('option[value="auto"]').disabled = false;
   $("ai-hint").textContent += ` Model: ${cfg.ai_model}.`;
 }).catch(() => {});
 
@@ -360,11 +374,13 @@ $("form").addEventListener("submit", async (e) => {
     body.append("request", $("request").value);
   }
   body.append("mystery", $("mystery").value);
+  body.append("judge", $("judge").value);
   if ($("guess-test").checked) body.append("guess_test", "true");
 
   go.disabled = true;
+  const local = $("judge").value === "clip";
   const busy = $("mystery").value === "auto"
-    ? "Trying mystery levels and asking the AI to guess each (about 15 s)…"
+    ? `Trying mystery levels and judging each (${local ? "a few seconds; the first run loads CLIP" : "about 15 s"})…`
     : $("ai").checked || $("guess-test").checked ? "Generating and asking the AI…" : "Generating…";
   setStatus(busy, false, true);
   const started = performance.now();
@@ -417,9 +433,12 @@ function showResult(data) {
     const colors = { "mystery": "var(--good)", "too easy": "var(--warn)", "unrecognizable": "var(--bad)" };
     const labels = { "mystery": "Mystery: hidden until solved", "too easy": "Too easy: guessable from the dots", "unrecognizable": "Unrecognizable even when solved" };
     $("verdict").textContent = labels[test.verdict];
+    $("judge-used").textContent = data.judge === "clip" ? "judged by local CLIP" : "judged by OpenAI";
     $("verdict").style.background = colors[test.verdict];
     const show = (g, ok) => `${g.label} ${ok ? "✓" : "✗"} <span class="hint">(${Math.round(g.confidence * 100)}% sure)</span>`;
     $("g-truth").textContent = test.truth;
+    document.querySelectorAll(".guess .k")[1].textContent = data.judge === "clip" ? "Before solving, CLIP guessed" : "Before solving, AI guessed";
+    document.querySelectorAll(".guess .k")[2].textContent = data.judge === "clip" ? "After solving, CLIP guessed" : "After solving, AI guessed";
     $("g-before").innerHTML = show(test.before, test.before_correct);
     $("g-after").innerHTML = show(test.after, test.after_correct);
     $("tried").innerHTML = data.candidates.length

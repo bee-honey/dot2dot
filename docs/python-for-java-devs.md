@@ -323,6 +323,28 @@ give a `(16, M, 2)` grid of differences, with no nested loops.
 - `numpy.random.default_rng(seed)`, seeded from the image, makes filler
   strokes reproducible: same picture, same puzzle.
 
+### Local CLIP judge: `clip_judge.py`
+- **CLIP** maps images and sentences into the same vector space (512
+  numbers each). "Is this a penguin?" becomes: embed the image, embed
+  "a drawing of a penguin", and compare with a dot product (cosine
+  similarity). Comparing against 354 captions and taking a softmax gives
+  zero-shot classification: no training needed.
+- **Prompt ensembling**: each label is embedded with five phrasings
+  ("a sketch of a...", "a cartoon...") and the vectors averaged; more
+  robust than a single template.
+- **PyTorch basics seen here**: `.to("mps")` moves the model to the Apple
+  GPU; `with torch.no_grad():` turns off gradient tracking (inference only,
+  faster, less memory); `model.eval()` switches off training-only behavior.
+- **Measure before trusting**: the first version agreed with the LLM on
+  only 46% of "recognizable after" calls. Looking at the data showed
+  CLIP answering "squiggle" for every answer key: printed digits confused
+  it. Rendering answer keys without numbers for CLIP raised it to 88%.
+  `scripts/compare_judges.py` saves every comparison to JSON, the seed of
+  the training dataset.
+- `[project.optional-dependencies] clip = [...]` is like a Maven profile or
+  optional dependency: `pip install -e ".[clip]"` adds the heavy ML stack
+  only when you want it.
+
 ### A dataclass gotcha
 `@dataclass` generates `__eq__` comparing every field. With a NumPy array
 field, `a == b` returns an array, not a bool, so `path in paths` raises an

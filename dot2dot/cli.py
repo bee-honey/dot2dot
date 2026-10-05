@@ -30,7 +30,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mystery", choices=["0", "1", "2", "auto"], default="0",
         help="hide the picture until solved: 0 off, 1 some, 2 lots, auto = AI picks (default: 0)",
     )
-    parser.add_argument("--guess-test", action="store_true", help="ask the AI what it sees before/after solving")
+    parser.add_argument("--guess-test", action="store_true", help="ask a judge what it sees before/after solving")
+    parser.add_argument(
+        "--judge", choices=["clip", "openai"], default="clip",
+        help="who judges the guess test / auto-tune: clip (local, free; default) or openai",
+    )
     parser.add_argument("--request", default="", help='instructions for the AI planner, e.g. "easy, for a 5-year-old"')
     parser.add_argument(
         "--max-lines",
@@ -74,10 +78,14 @@ def main(argv: list[str] | None = None) -> int:
 
         test = None
         if args.mystery == "auto" or args.guess_test:
-            from dot2dot.judge import OpenAIJudge, run_guess_test, tune_mystery
-            from dot2dot.raster import render
+            from dot2dot.judge import OpenAIJudge, judge_images, run_guess_test, tune_mystery
 
-            judge = OpenAIJudge()
+            if args.judge == "clip":
+                from dot2dot.clip_judge import default_clip_judge
+
+                judge = default_clip_judge()
+            else:
+                judge = OpenAIJudge()
         if args.mystery == "auto":
             best, tried = tune_mystery(judge, picture, build_at)
             for c in tried:
@@ -88,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = build_at(int(args.mystery))
             if args.guess_test:
-                test = run_guess_test(judge, picture, render(result.puzzle), render(result.puzzle, solution=True))
+                test = run_guess_test(judge, picture, *judge_images(judge, result.puzzle))
     except (FileNotFoundError, ValueError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

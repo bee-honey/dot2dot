@@ -74,6 +74,19 @@ class Judge(Protocol):
     def same_thing(self, truth: str, guesses: list[str]) -> list[bool]: ...
 
 
+def judge_images(judge, puzzle) -> tuple[np.ndarray, np.ndarray]:
+    """The unsolved page and answer key, rendered the way this judge reads best.
+
+    The unsolved page always shows numbers (that's what a kid sees). Some
+    judges (CLIP) misread the answer key when digits are printed all over the
+    drawing, so they set `answer_key_numbers = False`.
+    """
+    from dot2dot.raster import render
+
+    numbers = getattr(judge, "answer_key_numbers", True)
+    return render(puzzle), render(puzzle, solution=True, numbers=numbers)
+
+
 def run_guess_test(
     judge: Judge, original: np.ndarray, puzzle_page: np.ndarray, answer_key: np.ndarray, truth: Guess | None = None
 ) -> GuessTest:
@@ -105,13 +118,11 @@ def tune_mystery(judge: Judge, original: np.ndarray, build_at_level, levels=(2, 
     highest mystery score; ties go to the earlier (more mysterious) level.
     If nothing is recognizable once solved, the faithful level-0 puzzle wins.
     """
-    from dot2dot.raster import render
-
     truth = judge.guess(original)
     candidates = []
     for level in levels:
         result = build_at_level(level)
-        test = run_guess_test(judge, original, render(result.puzzle), render(result.puzzle, solution=True), truth)
+        test = run_guess_test(judge, original, *judge_images(judge, result.puzzle), truth)
         candidates.append(Candidate(level, result, test))
     recognizable = [c for c in candidates if c.test.after_correct]
     pool = recognizable or [c for c in candidates if c.level == 0] or candidates

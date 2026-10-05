@@ -5,6 +5,7 @@ then open http://127.0.0.1:8000.
 """
 
 import base64
+import importlib.util
 import uuid
 from collections import OrderedDict
 from pathlib import Path
@@ -20,7 +21,7 @@ from dot2dot import config
 from dot2dot.guidance import plan_overlay
 from dot2dot.pdf import pdf_bytes
 from dot2dot.pipeline import STYLES, build
-from dot2dot.judge import OpenAIJudge, run_guess_test, tune_mystery
+from dot2dot.judge import OpenAIJudge, judge_images, run_guess_test, tune_mystery
 from dot2dot.planner import DEFAULT_OPENAI_MODEL, OpenAIPlanner
 from dot2dot.raster import render
 from dot2dot.preprocess import decode_image
@@ -98,6 +99,7 @@ class PuzzleOut(BaseModel):
     plan: PlanOut | None = None
     ai_error: str | None = None  # set when an AI step failed and we carried on without it
     mystery_level: int = 0
+    judge: str | None = None  # which judge ran the guess test: clip | openai
     guess_test: GuessTestOut | None = None
     candidates: list[CandidateOut] = []  # what auto-tune tried
 
@@ -105,6 +107,7 @@ class PuzzleOut(BaseModel):
 class ConfigOut(BaseModel):
     ai_available: bool
     ai_model: str | None
+    clip_available: bool  # local CLIP judge installed (free, no API key)
 
 
 class _PdfCache:
@@ -129,15 +132,22 @@ class _PdfCache:
 
 pdfs = _PdfCache(CACHE_SIZE)
 _planner: OpenAIPlanner | None = None
-_judge: OpenAIJudge | None = None
+_openai_judge: OpenAIJudge | None = None
+CLIP_AVAILABLE = importlib.util.find_spec("open_clip") is not None
 
 
-def get_judge() -> OpenAIJudge | None:
-    """The shared AI judge for the guess test, or None without an API key."""
-    global _judge
-    if _judge is None and config.openai_api_key():
-        _judge = OpenAIJudge()
-    return _judge
+def get_judge(kind: str = "clip"):
+    """The shared judge for guess tests: local CLIP (free) or OpenAI. None if unavailable."""
+    global _openai_judge
+    if kind == "openai":
+        if _openai_judge is None and config.openai_api_key():
+            _openai_judge = OpenAIJudge()
+        return _openai_judge
+    if CLIP_AVAILABLE:
+        from dot2dot.clip_judge import default_clip_judge
+
+        return default_clip_judge()  # loaded once, then cached
+    return None
 
 
 def _guess_test_out(test) -> GuessTestOut:
@@ -173,7 +183,11 @@ def index() -> FileResponse:
 @app.get("/api/config", response_model=ConfigOut)
 def get_config() -> ConfigOut:
     available = config.openai_api_key() is not None
-    return ConfigOut(ai_available=available, ai_model=config.openai_model(DEFAULT_OPENAI_MODEL) if available else None)
+    return ConfigOut(
+        ai_available=available,
+        ai_model=config.openai_model(DEFAULT_OPENAI_MODEL) if available else None,
+        clip_available=CLIP_AVAILABLE,
+    )
 
 
 # A plain `def` (not `async def`) on purpose: image processing is CPU-heavy
@@ -189,6 +203,7 @@ def create_puzzle(
     request: str = Form(""),
     mystery: str = Form("0"),  # "0", "1", "2" or "auto" (AI picks the level)
     guess_test: bool = Form(False),
+    judge_kind: str = Form("clip", alias="judge"),  # clip (local, free) | openai
 ) -> PuzzleOut:
     if style not in STYLES:
         raise HTTPException(400, f"style must be one of: {', '.join(STYLES)}")
@@ -223,9 +238,12 @@ def create_puzzle(
         return build(picture, num_dots=dots, max_paths=max_paths, style=style, plan=plan, mystery_level=level)
 
     test, candidates = None, []
-    judge = get_judge() if (guess_test or mystery == "auto") else None
+    if judge_kind not in ("clip", "openai"):
+        raise HTTPException(400, "judge must be clip or openai")
+    judge = get_judge(judge_kind) if (guess_test or mystery == "auto") else None
     if (guess_test or mystery == "auto") and judge is None:
-        ai_error = "AI guess test unavailable: set OPENAI_API_KEY in .env"
+        ai_error = ("OpenAI judge unavailable: set OPENAI_API_KEY in .env" if judge_kind == "openai"
+                    else "Local CLIP judge unavailable: pip install open_clip_torch")
     try:
         if mystery == "auto" and judge is not None:
             try:
@@ -244,7 +262,7 @@ def create_puzzle(
             result = build_at(level)
             if guess_test and judge is not None:
                 try:
-                    test = run_guess_test(judge, picture, render(result.puzzle), render(result.puzzle, solution=True))
+                    test = run_guess_test(judge, picture, *judge_images(judge, result.puzzle))
                 except Exception as error:
                     ai_error = f"Guess test failed ({type(error).__name__}: {error})"[:300]
     except ValueError as error:
@@ -292,6 +310,7 @@ def create_puzzle(
         plan=plan_out,
         ai_error=ai_error,
         mystery_level=level,
+        judge=judge_kind if test else None,
         guess_test=_guess_test_out(test) if test else None,
         candidates=candidates,
     )
