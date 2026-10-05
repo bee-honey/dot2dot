@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import pytest
 
-from dot2dot import photo
+from dot2dot import lineart, photo
 from dot2dot.models import Path
 from dot2dot.preprocess import decode_image
 
@@ -42,7 +42,7 @@ def test_silhouette_along_image_edge_is_dropped():
         + [(x, 399) for x in range(300, 100, -1)] + [(100, y) for y in range(399, 100, -1)],
         dtype=np.float64,
     )
-    pieces = photo._drop_frame_edges(Path(outline, closed=True, essential=True), (400, 400, 3))
+    pieces = lineart.drop_frame_edges(Path(outline, closed=True, essential=True), (400, 400, 3), photo.EDGE_CLIP)
     assert len(pieces) == 1
     assert pieces[0].essential and not pieces[0].closed
     assert pieces[0].points[:, 1].max() < 396

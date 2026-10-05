@@ -21,10 +21,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--style",
         choices=STYLES,
-        default="outline",
-        help="outline: trace the subject's border; lineart: follow the drawing's ink lines, "
-        "including details inside (default: outline)",
+        default="auto",
+        help="auto: pick for you (default); lineart: cartoons and coloring pages; "
+        "photo: real photos and busy backgrounds; outline: just the border",
     )
+    parser.add_argument("--ai", action="store_true", help="use the AI planner (needs OPENAI_API_KEY in .env)")
+    parser.add_argument("--request", default="", help='instructions for the AI planner, e.g. "easy, for a 5-year-old"')
     parser.add_argument(
         "--max-lines",
         type=int,
@@ -49,16 +51,25 @@ def main(argv: list[str] | None = None) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
 
     try:
+        plan = None
+        if args.ai:
+            from dot2dot.planner import OpenAIPlanner
+            from dot2dot.preprocess import load_image
+
+            plan = OpenAIPlanner().plan(load_image(args.image), args.request)
+            print(f"AI plan: {plan.subject} ({plan.image_kind}); suggests {plan.suggested_dots} dots; "
+                  f"must include: {', '.join(p.name for p in plan.must_include) or '-'}")
         max_paths = args.max_lines or (1 if args.style == "outline" else None)
-        result = build(args.image, num_dots=args.dots, max_paths=max_paths, style=args.style)
-    except (FileNotFoundError, ValueError) as error:
+        result = build(args.image, num_dots=args.dots, max_paths=max_paths, style=args.style, plan=plan)
+    except (FileNotFoundError, ValueError, RuntimeError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
     puzzle = result.puzzle
     save_pdf(puzzle, out, title=args.title)
     print(f"Wrote {out} ({len(puzzle.dots)} dots, {len(puzzle.strokes)} lines)")
-    print(evaluate(puzzle, result.reference).summary())
+    print(f"Style: {result.style}")
+    print(evaluate(puzzle, result.reference, result.plan).summary())
 
     if args.svg:
         for name, solution in [("puzzle", False), ("solution", True)]:

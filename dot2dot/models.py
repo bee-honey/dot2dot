@@ -5,7 +5,9 @@ from dataclasses import dataclass
 import numpy as np
 
 
-@dataclass(frozen=True)
+# eq=False: compare paths by identity. The generated field-by-field __eq__
+# would compare NumPy arrays, which don't give a single True/False.
+@dataclass(frozen=True, eq=False)
 class Path:
     """A traced line in image pixel coordinates, before it becomes dots.
 

@@ -168,16 +168,22 @@ background. Real background removal comes in Phase 2.
 
 ### Stage 3: `simplify.py`: thousands of pixels → N dots
 This is the most algorithmic part.
-1. **Douglas–Peucker** (`approxPolyDP`): given a tolerance ε, it drops points
-   that are within ε of a straight line between their neighbors. Corners
-   survive and straight runs collapse. We **binary-search ε** to get ≤ N points.
-2. **Merge clumps**: a diagonal edge drawn in pixels is a staircase, so one
-   corner can produce 2–3 almost identical points. We keep the middle one of each clump.
-3. **Fill gaps**: while we have fewer than N dots, we insert a dot halfway along the
-   longest stretch of outline between two dots.
+1. **Corners**: at each point, compare the direction coming in with the
+   direction going out (measured a few pixels back and ahead). A turn
+   sharper than 45° is a corner, and every corner gets a dot.
+2. **Even spacing with a curve bonus**: between corners, dots go at equal
+   steps of "effort" = distance + a bonus for turning. Straight runs are
+   spaced by length; tight curves (eyes, fingertips) get a few extra dots.
+3. **Readable limits**: dots are never closer than about 1/70 of the image
+   size (`max_readable_dots`), and where lines meet, a dot on top of an
+   earlier line's dot is dropped (`declutter`).
 
-`arc[k]` (cumulative distance along the outline) is the key data structure.
-It turns "how far apart are these two dots along the shape?" into a subtraction.
+The first version used Douglas–Peucker (`approxPolyDP`), a classic
+polyline-simplification algorithm. It's great at corners but picks irregular
+points on smooth pixel curves, which looked like extra edges on a circle.
+`arc[k]` (cumulative distance along the outline) is still the key data
+structure: it turns "how far apart are these two dots along the shape?" into
+a subtraction, and `np.searchsorted` finds "the point 120 px along" in O(log n).
 
 ### Stage 4: `order.py`: which dot is #1, and which way?
 - The **shoelace formula** gives a polygon's signed area. The sign tells us the
@@ -284,6 +290,34 @@ clearance (distance from the number's box to the nearest other dot, line, or
 already-placed number). The highest score wins. All 16 candidates are scored
 at once with NumPy broadcasting: arrays shaped `(16, 1, 2)` minus `(1, M, 2)`
 give a `(16, M, 2)` grid of differences, with no nested loops.
+
+### AI planner: `planner.py` + `guidance.py`
+- `Planner` is a `typing.Protocol`, Python's structural interface: any class
+  with a matching `plan(image, request)` method satisfies it, with no
+  `implements`. `OpenAIPlanner` is one implementation; tests use a
+  `FakePlanner` with the same method.
+- **Structured outputs**: the request includes a JSON Schema
+  (`PLAN_SCHEMA`) with `strict: True`, so the model must return JSON matching
+  it, much like binding a response to a DTO. `parse_plan` then clamps
+  anything out of range: never trust model output blindly.
+- The planner only adjusts knobs (weights, ignore regions, repairs). The
+  geometry stays deterministic, so a bad plan can't break a puzzle.
+- `config.py` calls `load_dotenv()`, which reads `.env` into environment
+  variables, like `application.properties`, but kept out of git for secrets.
+- **Model choice was measured, not guessed**: three models on the same
+  samples, comparing box accuracy and latency (see `scripts/eval_samples.py --ai`).
+
+### A dataclass gotcha
+`@dataclass` generates `__eq__` comparing every field. With a NumPy array
+field, `a == b` returns an array, not a bool, so `path in paths` raises an
+error. `Path` uses `@dataclass(frozen=True, eq=False)` to compare by identity,
+the same as Java's default `Object.equals`.
+
+### Mocking: `monkeypatch`
+`tests/test_planner.py` swaps the real planner for a fake with
+`monkeypatch.setattr(web, "get_planner", lambda: fake)`, pytest's equivalent
+of Mockito's `when(...).thenReturn(...)`. The patch is undone automatically
+after each test.
 
 ### CLI: `cli.py`
 `argparse` is Python's built-in equivalent of picocli / Apache Commons CLI.

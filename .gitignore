@@ -25,6 +25,7 @@ htmlcov/
 # Environment / secrets
 .env
 .env.*
+!.env.example
 
 # Streamlit
 .streamlit/secrets.toml

@@ -120,7 +120,10 @@ dot2dot/
 │   ├── simplify.py       # path → exactly N dots, keeping corners
 │   ├── order.py          # stroke sequencing (nearest line next)
 │   ├── labels.py         # collision-aware number placement
-│   ├── quality.py        # coverage/accuracy score + check image
+│   ├── quality.py        # coverage/accuracy/part score + check image
+│   ├── planner.py        # AI planner (OpenAI vision → structured plan)
+│   ├── guidance.py       # applies a plan: ignore, weight parts, repair
+│   ├── config.py         # settings from environment / .env
 │   ├── render.py         # SVG output (puzzle + solution)
 │   ├── pdf.py            # PDF worksheet (puzzle + answer key)
 │   ├── pipeline.py       # end-to-end orchestration
@@ -129,7 +132,8 @@ dot2dot/
 │   │   ├── app.py        # FastAPI app (upload → puzzle JSON, PDF download)
 │   │   └── static/index.html  # single-page UI
 │   └── __main__.py       # `python -m dot2dot`
-├── samples/              # sample images + generator script
+├── samples/              # sample images + generator script (private/ is git-ignored)
+├── scripts/              # eval_samples.py: visual regression grid
 ├── tests/
 ├── docs/
 ├── pyproject.toml
@@ -162,6 +166,9 @@ dot2dot my_cartoon.png --style lineart --dots 250 --max-lines 30 --title "Hero T
 # Real photo (first run downloads a ~170 MB background-removal model)
 dot2dot family_photo.heic --style photo --dots 150
 
+# Let it pick the style (the default), with the AI planner and an instruction
+dot2dot penguin.jpg --ai --request "easy puzzle for a 6-year-old"
+
 # Write a coverage check image: gray = traced, magenta = missed
 dot2dot my_cartoon.png --style lineart --dots 250 --check
 
@@ -171,7 +178,8 @@ pytest
 
 | Style | Use for | How it works |
 |-------|---------|--------------|
-| `outline` (default) | A clear subject on a plain, contrasting background | Separates subject from background, traces the border |
+| `auto` (default) | Anything | Line art when the background is plain, Photo otherwise |
+| `outline` | A clear subject on a plain, contrasting background | Separates subject from background, traces the border |
 | `photo` | Real photos: people, pets, objects (JPG, PNG, iPhone HEIC) | Removes the background with a segmentation model (rembg, runs locally), traces the subject's outline, sketches interior features with an XDoG filter, and gives faces extra dots (OpenCV YuNet face detector) |
 | `lineart` | Comics, cartoons, coloring-book art with dark ink lines | Traces the full silhouette as one unbroken loop, then adds interior ink lines (thinned to centerlines) and the edges of solid black areas |
 
@@ -221,13 +229,15 @@ In multi-line puzzles, a **ringed dot** marks the start of a new line: lift the 
 - [ ] Stipple / micro-dot styles
 
 ### Phase 4 — AI-assisted
-- [ ] AI reviewer: a vision model scores candidate puzzles (several settings) and picks the best / suggests adjustments (`--review`)
-- [ ] Subject classification (person / animal / vehicle / object) → per-category strategy
+- [x] AI planner: subject, must-include parts, ignore regions, suggested dots (`--ai`)
+- [x] Automatic style selection (`--style auto`)
+- [ ] AI reviewer: a vision model scores the finished puzzle and triggers a retry with adjusted settings
+- [x] Subject classification via the planner (coloring page / cartoon / photo / render)
   - Portrait: face outline, hair silhouette, key facial features
   - Animal: silhouette + major features
   - Vehicle: body, wheels, windows
 - [ ] Automatic quality evaluation and retry
-- [ ] Natural-language requests ("easy puzzle for my 6-year-old, drop the background")
+- [x] Natural-language requests ("easy puzzle for my 6-year-old"), via the planner
 
 ### Phase 5 — Product
 - [ ] FastAPI backend
@@ -237,11 +247,41 @@ In multi-line puzzles, a **ringed dot** marks the start of a new line: lift the 
 
 ---
 
+## AI planner (optional)
+
+A vision model looks at the picture before the image processing runs, and
+returns a plan: what the subject is, which parts must appear (eyes, beak,
+feet...), what to ignore (captions, logos, page frames), and a suggested dot
+count. The pipeline then gives those parts extra dots, drops ignored regions,
+and repairs parts it missed. The quality score reports coverage per part, so
+"feet missing" shows up as a number instead of a silent 100.
+
+Setup (uses OpenAI):
+
+```bash
+cp .env.example .env      # then paste your key after OPENAI_API_KEY=
+```
+
+Then tick **Use AI planner** in the web app, or pass `--ai` on the command
+line. Without a key everything works as before. If the AI call fails, the
+puzzle is made without it. The image (downscaled) is sent to OpenAI only when
+the planner is used.
+
+## Evaluating changes
+
+```bash
+python scripts/eval_samples.py --styles auto              # grid of all samples → output/eval/grid.png
+python scripts/eval_samples.py --styles auto --ai         # plus AI-planned versions and plan overlays
+```
+
+Runs every image in `samples/private/` and writes one comparison grid, the
+regression suite for "does this change make puzzles better?".
+
 ## Privacy
 
-Everything runs locally: background removal and face detection use models
-downloaded once to your machine (`~/.rembg`, `~/.cache/dot2dot`). Photos are
-never uploaded anywhere. Put personal test photos in `samples/private/`,
+Image processing runs locally: background removal and face detection use
+models downloaded once to your machine (`~/.rembg`, `~/.cache/dot2dot`).
+Photos only leave your machine if you turn on the AI planner. Put personal test photos in `samples/private/`,
 which is git-ignored.
 
 ## A note on images

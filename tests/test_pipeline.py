@@ -88,6 +88,6 @@ def test_transparent_background_is_treated_as_white(tmp_path):
     path = tmp_path / "cutout.png"
     cv2.imwrite(str(path), img)
     puzzle = generate(path, num_dots=20, style="lineart", max_paths=None)
-    xs = [d.x for d in puzzle.dots]
-    # The disc, not the whole canvas, was traced.
-    assert min(xs) > 40 and max(xs) < 260
+    xs = [d.x / puzzle.width for d in puzzle.dots]
+    # The disc (x from 0.2 to 0.8 of the width), not the whole canvas, was traced.
+    assert min(xs) > 0.13 and max(xs) < 0.87

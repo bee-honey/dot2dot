@@ -20,6 +20,8 @@ dependencies = [
     "pillow-heif>=0.16",
     "rembg>=2.0.50",
     "onnxruntime>=1.17",
+    "python-dotenv>=1.0",
+    "openai>=1.40",
 ]
 
 [project.optional-dependencies]

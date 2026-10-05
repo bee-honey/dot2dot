@@ -39,15 +39,23 @@ class Quality:
     accuracy: float
     crowded_labels: int
     total_dots: int
+    # (part name, share traced) for each must-include part from an AI plan.
+    parts: tuple[tuple[str, float], ...] = ()
+
+    @property
+    def parts_coverage(self) -> float | None:
+        return sum(c for _, c in self.parts) / len(self.parts) if self.parts else None
 
     @property
     def overall(self) -> float:
-        """One weighted score, 0-100. The silhouette matters most."""
+        """One weighted score, 0-100. The silhouette and named parts matter most."""
         parts = [
             (0.45, self.outline_coverage),
             (0.25, self.detail_coverage),
             (0.20, self.accuracy),
             (0.10, 1 - self.crowded_labels / max(self.total_dots, 1)),
+            # With a plan, missing parts (a beak, feet) weigh heavily.
+            (0.50, self.parts_coverage),
         ]
         weighted = [(w, v) for w, v in parts if v is not None]
         return 100 * sum(w * v for w, v in weighted) / sum(w for w, _ in weighted)
@@ -56,14 +64,18 @@ class Quality:
         def pct(value: float | None) -> str:
             return "n/a" if value is None else f"{value:.0%}"
 
-        return (
+        text = (
             f"Quality {self.overall:.0f}/100 | outline {pct(self.outline_coverage)} | "
             f"detail {pct(self.detail_coverage)} | accuracy {pct(self.accuracy)} | "
             f"crowded labels {self.crowded_labels}"
         )
+        if self.parts:
+            text += "\nParts: " + ", ".join(f"{name} {pct(c)}" for name, c in self.parts)
+        return text
 
 
-def evaluate(puzzle: Puzzle, reference: list[Path]) -> Quality:
+def evaluate(puzzle: Puzzle, reference: list[Path], plan=None) -> Quality:
+    """Score the puzzle against the reference lines (and the plan's must-include parts)."""
     tolerance = TOLERANCE_FRACTION * max(puzzle.width, puzzle.height)
     outline_mask, detail_mask = _reference_masks(puzzle, reference)
     solution_mask = _solution_mask(puzzle)
@@ -79,12 +91,19 @@ def evaluate(puzzle: Puzzle, reference: list[Path]) -> Quality:
     samples = _sample_segments(puzzle)
     accuracy = float((to_reference[samples[:, 1], samples[:, 0]] <= tolerance).mean()) if len(samples) else 0.0
 
+    parts = ()
+    if plan is not None and plan.must_include:
+        from dot2dot.guidance import part_coverage
+
+        parts = tuple(part_coverage(plan, solution_mask, reference, tolerance))
+
     return Quality(
         outline_coverage=coverage(outline_mask),
         detail_coverage=coverage(detail_mask),
         accuracy=accuracy,
         crowded_labels=count_crowded_labels(puzzle),
         total_dots=len(puzzle.dots),
+        parts=parts,
     )
 
 

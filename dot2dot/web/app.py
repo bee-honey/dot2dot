@@ -16,8 +16,11 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from dot2dot import config
+from dot2dot.guidance import plan_overlay
 from dot2dot.pdf import pdf_bytes
 from dot2dot.pipeline import STYLES, build
+from dot2dot.planner import DEFAULT_OPENAI_MODEL, OpenAIPlanner
 from dot2dot.preprocess import decode_image
 from dot2dot.quality import coverage_image, evaluate
 from dot2dot.render import to_svg
@@ -32,23 +35,47 @@ app = FastAPI(title="dot2dot")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+class PartOut(BaseModel):
+    name: str
+    coverage: float
+
+
 class QualityOut(BaseModel):
     overall: float
     outline_coverage: float | None
     detail_coverage: float | None
     accuracy: float
     crowded_labels: int
+    parts: list[PartOut] = []
+
+
+class PlanOut(BaseModel):
+    subject: str
+    image_kind: str
+    style: str
+    suggested_dots: int
+    must_include: list[str]
+    ignore: list[str]
+    overlay_png: str  # the original image with the plan's boxes drawn on
 
 
 class PuzzleOut(BaseModel):
     id: str
     dots: int
     lines: int
+    style: str  # style actually used ("auto" resolved)
     puzzle_svg: str
     solution_svg: str
     check_png: str  # data: URL, ready to drop into an <img src>
     quality: QualityOut
     pdf_url: str
+    plan: PlanOut | None = None
+    ai_error: str | None = None  # set when the planner failed and we carried on without it
+
+
+class ConfigOut(BaseModel):
+    ai_available: bool
+    ai_model: str | None
 
 
 class _PdfCache:
@@ -72,11 +99,31 @@ class _PdfCache:
 
 
 pdfs = _PdfCache(CACHE_SIZE)
+_planner: OpenAIPlanner | None = None
+
+
+def get_planner() -> OpenAIPlanner | None:
+    """The shared AI planner (created on first use), or None without an API key."""
+    global _planner
+    if _planner is None and config.openai_api_key():
+        _planner = OpenAIPlanner()
+    return _planner
+
+
+def _png_data_url(image) -> str:
+    _, png = cv2.imencode(".png", image)
+    return "data:image/png;base64," + base64.b64encode(png.tobytes()).decode()
 
 
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/api/config", response_model=ConfigOut)
+def get_config() -> ConfigOut:
+    available = config.openai_api_key() is not None
+    return ConfigOut(ai_available=available, ai_model=config.openai_model(DEFAULT_OPENAI_MODEL) if available else None)
 
 
 # A plain `def` (not `async def`) on purpose: image processing is CPU-heavy
@@ -85,9 +132,11 @@ def index() -> FileResponse:
 def create_puzzle(
     image: UploadFile = File(...),
     dots: int = Form(150),
-    style: str = Form("lineart"),
+    style: str = Form("auto"),
     max_lines: int | None = Form(None),
     title: str = Form("Connect the Dots"),
+    ai: bool = Form(False),
+    request: str = Form(""),
 ) -> PuzzleOut:
     if style not in STYLES:
         raise HTTPException(400, f"style must be one of: {', '.join(STYLES)}")
@@ -99,33 +148,67 @@ def create_puzzle(
         raise HTTPException(413, "Image is too large (max 15 MB)")
 
     try:
+        picture = decode_image(data)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+    plan, ai_error = None, None
+    if ai:
+        planner = get_planner()
+        if planner is None:
+            ai_error = "AI planner unavailable: set OPENAI_API_KEY in .env"
+        else:
+            try:
+                plan = planner.plan(picture, request)
+            except Exception as error:  # network, quota, bad response: carry on without AI
+                ai_error = f"AI planner failed, made the puzzle without it ({type(error).__name__}: {error})"[:300]
+
+    try:
         max_paths = max_lines or (1 if style == "outline" else None)
-        result = build(decode_image(data), num_dots=dots, max_paths=max_paths, style=style)
+        result = build(picture, num_dots=dots, max_paths=max_paths, style=style, plan=plan)
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
 
     puzzle = result.puzzle
-    quality = evaluate(puzzle, result.reference)
+    quality = evaluate(puzzle, result.reference, plan)
     puzzle_id = uuid.uuid4().hex
     filename = f"{Path(image.filename or 'puzzle').stem}.pdf"
     pdfs.put(puzzle_id, filename, pdf_bytes(puzzle, title=title or "Connect the Dots"))
 
-    _, png = cv2.imencode(".png", coverage_image(puzzle, result.reference))
+    plan_out = None
+    if plan is not None:
+        preview = picture if max(picture.shape[:2]) <= 900 else cv2.resize(
+            picture, None, fx=900 / max(picture.shape[:2]), fy=900 / max(picture.shape[:2]), interpolation=cv2.INTER_AREA
+        )
+        plan_out = PlanOut(
+            subject=plan.subject,
+            image_kind=plan.image_kind,
+            style=plan.style,
+            suggested_dots=plan.suggested_dots,
+            must_include=[p.name for p in plan.must_include],
+            ignore=[p.name for p in plan.ignore],
+            overlay_png=_png_data_url(plan_overlay(preview, plan)),
+        )
+
     return PuzzleOut(
         id=puzzle_id,
         dots=len(puzzle.dots),
         lines=len(puzzle.strokes),
+        style=result.style,
         puzzle_svg=to_svg(puzzle),
         solution_svg=to_svg(puzzle, solution=True),
-        check_png="data:image/png;base64," + base64.b64encode(png.tobytes()).decode(),
+        check_png=_png_data_url(coverage_image(puzzle, result.reference)),
         quality=QualityOut(
             overall=quality.overall,
             outline_coverage=quality.outline_coverage,
             detail_coverage=quality.detail_coverage,
             accuracy=quality.accuracy,
             crowded_labels=quality.crowded_labels,
+            parts=[PartOut(name=name, coverage=c) for name, c in quality.parts],
         ),
         pdf_url=f"/api/puzzles/{puzzle_id}/pdf",
+        plan=plan_out,
+        ai_error=ai_error,
     )
 
 

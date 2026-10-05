@@ -7,13 +7,15 @@ import numpy as np
 
 from dot2dot import lineart, photo
 from dot2dot.contours import find_outlines, make_mask
+from dot2dot.guidance import apply_plan
 from dot2dot.labels import choose_font_size, outward_normals, place_labels
 from dot2dot.models import Dot, Path, Puzzle, Stroke
 from dot2dot.order import order_paths
+from dot2dot.planner import Plan
 from dot2dot.preprocess import load_image, resize, to_grayscale
-from dot2dot.simplify import allocate_dots, select_paths, simplify
+from dot2dot.simplify import allocate_dots, declutter, max_readable_dots, select_paths, simplify
 
-STYLES = ("outline", "lineart", "photo")
+STYLES = ("auto", "outline", "lineart", "photo")
 # Line art and photos keep more detail, so they're processed at a higher resolution.
 WORKING_SIZE = {"outline": 800, "lineart": 1000, "photo": 1000}
 
@@ -26,6 +28,23 @@ class Result:
     # Every path found in the image, before any were dropped or simplified:
     # the "reference drawing" the puzzle is trying to reproduce.
     reference: list[Path]
+    style: str  # the style actually used (resolves "auto")
+    plan: Plan | None = None
+
+
+def choose_style(image: np.ndarray, plan: Plan | None = None) -> str:
+    """Pick a style when the user asked for "auto".
+
+    A plain background means the subject can be cut out by color, so line art
+    works; anything busier (a scene, a blurred photo backdrop) needs the photo
+    pipeline's background removal, whatever the plan says.
+    """
+    _, subject = lineart.find_subject(resize(image, WORKING_SIZE["lineart"]))
+    if subject is None:
+        return "photo"
+    # The plan may switch a plain-background picture to the photo pipeline,
+    # but never to the bare outline style (that would drop interior details).
+    return "photo" if plan is not None and plan.style == "photo" else "lineart"
 
 
 def extract_paths(image: np.ndarray, style: str) -> list[Path]:
@@ -59,23 +78,37 @@ def build(
     num_dots: int = 60,
     max_paths: int | None = 1,
     style: str = "outline",
+    plan: Plan | None = None,
 ) -> Result:
-    """Like `generate`, but also returns the reference paths for quality checks."""
+    """Like `generate`, but also returns the reference paths for quality checks.
+
+    With a `plan` (from the AI planner), ignored regions are dropped,
+    must-include parts get extra dots, and missing parts are repaired.
+    """
     if style not in STYLES:
         raise ValueError(f"Unknown style {style!r}; choose from {', '.join(STYLES)}")
     if not isinstance(image, np.ndarray):
         image = load_image(image)
+    if style == "auto":
+        style = choose_style(image, plan)
     image = resize(image, WORKING_SIZE[style])
     height, width = image.shape[:2]
 
     reference = extract_paths(image, style)
+    if plan is not None:
+        reference = apply_plan(reference, plan, image)
     if not reference:
         raise ValueError("No clear subject found in the image")
     paths = select_paths(reference, num_dots, max_paths)
+    # Asking for more dots than the lines can legibly hold just piles up numbers.
+    readable = max_readable_dots(paths, max(width, height))
+    if num_dots > readable:
+        num_dots = readable
+        paths = select_paths(reference, num_dots, max_paths)
 
     counts = allocate_dots(paths, num_dots)
     simplified = [replace(p, points=simplify(p, n)) for p, n in zip(paths, counts)]
-    ordered = order_paths(simplified)
+    ordered = declutter(order_paths(simplified), max(width, height))
 
     # Flatten the ordered paths into one numbered list of dots.
     points = np.concatenate([p.points for p in ordered])
@@ -97,4 +130,4 @@ def build(
         Dot(n, float(x), float(y), float(dx), float(dy), bool(ring))
         for n, (x, y), (dx, dy), ring in zip(numbers, points, directions, rings)
     ]
-    return Result(Puzzle(width, height, dots, strokes, font_size), reference)
+    return Result(Puzzle(width, height, dots, strokes, font_size), reference, style, plan)

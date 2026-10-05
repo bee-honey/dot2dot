@@ -50,13 +50,21 @@ def _to_bgr(image: Image.Image) -> np.ndarray:
 
 
 def resize(image: np.ndarray, max_side: int = MAX_SIDE) -> np.ndarray:
-    """Shrink the image so its longest side is at most `max_side` pixels."""
+    """Scale the image so its longest side is exactly `max_side` pixels.
+
+    Small images are enlarged too: line widths, blur sizes and other
+    thresholds are tuned for the working size, and a 400px clip-art image
+    would otherwise lose its eyes as "specks".
+    """
     height, width = image.shape[:2]
     scale = max_side / max(height, width)
-    if scale >= 1:
+    if scale == 1:
         return image
     new_size = (round(width * scale), round(height * scale))
-    return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+    # INTER_AREA averages pixels (best for shrinking); INTER_CUBIC interpolates
+    # smoothly (best for enlarging).
+    interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+    return cv2.resize(image, new_size, interpolation=interpolation)
 
 
 def to_grayscale(image: np.ndarray) -> np.ndarray:

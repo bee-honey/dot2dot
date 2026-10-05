@@ -122,6 +122,19 @@
   .panel-body { background: #fff; padding: 8px; }
   .panel-body svg, .panel-body img { width: 100%; height: auto; display: block; }
 
+  .ai-box { border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: none; flex-direction: column; gap: 8px; background: #fbfaf7; }
+  .ai-box.available { display: flex; }
+  .ai-toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .ai-toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
+  textarea { font: inherit; font-size: 13px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; min-height: 54px; }
+  .plan { display: grid; grid-template-columns: minmax(160px, 260px) 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 700px) { .plan { grid-template-columns: 1fr; } }
+  .plan img { width: 100%; border-radius: 8px; border: 1px solid var(--line); }
+  .plan h3 { margin: 0 0 6px; font-size: 15px; }
+  .plan p { margin: 4px 0; font-size: 13px; color: var(--muted); }
+  .parts { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .part { font-size: 12px; padding: 4px 9px; border-radius: 999px; color: #fff; }
+  .note { font-size: 13px; padding: 8px 12px; border-radius: 8px; background: #fff4e0; color: #7a5200; }
   details.check summary { cursor: pointer; font-weight: 600; font-size: 14px; }
   details.check .legend { color: var(--muted); font-size: 12px; margin: 8px 0; }
   details.check .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: -1px; }
@@ -152,6 +165,7 @@
 
       <label class="field">Style
         <select id="style">
+          <option value="auto">Auto (recommended)</option>
           <option value="lineart">Line art: cartoons &amp; drawings</option>
           <option value="photo">Photo: real pictures of people, pets, things</option>
           <option value="outline">Outline: just the border</option>
@@ -175,6 +189,12 @@
         <input id="title" type="text" value="Connect the Dots">
       </label>
 
+      <div class="ai-box" id="ai-box">
+        <label class="ai-toggle"><input id="ai" type="checkbox"> Use AI planner</label>
+        <span class="hint" id="ai-hint">An AI model looks at the picture first: what must appear (eyes, beak, feet…) and what to ignore (captions, logos). Adds a few seconds.</span>
+        <textarea id="request" placeholder="Optional instructions, e.g. &quot;easy puzzle for a 5-year-old&quot;"></textarea>
+      </div>
+
       <button id="go" class="primary" type="submit" disabled>Generate puzzle</button>
       <div id="status"></div>
     </form>
@@ -195,6 +215,7 @@
         <span class="chip">Accuracy <b id="q-accuracy"></b></span>
         <span class="chip">Crowded labels <b id="q-crowded"></b></span>
         <span class="chip" id="counts"></span>
+        <span class="chip">Style <b id="style-used"></b></span>
         <div class="actions">
           <a id="pdf" class="pdf" href="#">Download PDF</a>
           <button type="button" data-svg="puzzle">Puzzle SVG</button>
@@ -210,6 +231,20 @@
         <div class="card panel">
           <div class="panel-head">Answer key <a href="#" data-open="solution">open full size</a></div>
           <div class="panel-body" id="solution"></div>
+        </div>
+      </div>
+
+      <div class="note" id="ai-note" style="display:none"></div>
+
+      <div class="card plan" id="plan" style="display:none">
+        <img id="plan-img" alt="AI plan">
+        <div>
+          <h3>AI plan: <span id="plan-subject"></span></h3>
+          <p id="plan-meta"></p>
+          <p><b>Must include</b> (how much of each part the puzzle traces):</p>
+          <div class="parts" id="plan-parts"></div>
+          <p id="plan-ignore"></p>
+          <p id="plan-dots"></p>
         </div>
       </div>
 
@@ -233,6 +268,7 @@ let chosenFile = null;
 let lastResult = null;
 
 const STYLE_HINTS = {
+  auto: "Picks for you: Line art for drawings on a plain background, Photo for everything else.",
   lineart: "Follows the drawing's dark ink lines, including eyes, emblems and folds. Best for cartoons and comics.",
   photo: "Removes the background, then sketches the subject's features. Faces get extra detail. Takes a few seconds; try 100–200 dots.",
   outline: "Traces only the subject's border. Best for a clear subject on a plain background.",
@@ -240,6 +276,13 @@ const STYLE_HINTS = {
 const updateHint = () => { $("style-hint").textContent = STYLE_HINTS[$("style").value]; };
 $("style").addEventListener("change", updateHint);
 updateHint();
+
+// Show the AI controls only when the server has an API key configured.
+fetch("/api/config").then((r) => r.json()).then((cfg) => {
+  if (!cfg.ai_available) return;
+  $("ai-box").classList.add("available");
+  $("ai-hint").textContent += ` Model: ${cfg.ai_model}.`;
+}).catch(() => {});
 
 // Keep the slider and number box in sync.
 $("dots-range").addEventListener("input", (e) => { $("dots").value = e.target.value; });
@@ -280,16 +323,25 @@ $("form").addEventListener("submit", async (e) => {
   body.append("style", $("style").value);
   body.append("title", $("title").value);
   if ($("max-lines").value) body.append("max_lines", $("max-lines").value);
+  if ($("ai").checked) {
+    body.append("ai", "true");
+    body.append("request", $("request").value);
+  }
 
   go.disabled = true;
-  setStatus("Generating…", false, true);
+  setStatus($("ai").checked ? "Asking the AI planner, then generating…" : "Generating…", false, true);
   const started = performance.now();
   try {
     const response = await fetch("/api/puzzles", { method: "POST", body });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || response.statusText);
     showResult(data);
-    setStatus(`Done in ${((performance.now() - started) / 1000).toFixed(1)}s`);
+    const seconds = ((performance.now() - started) / 1000).toFixed(1);
+    const requested = Number(body.get("dots"));
+    const note = data.dots < requested * 0.95
+      ? ` · used ${data.dots} of ${requested} dots; more wouldn't fit legibly in this picture`
+      : "";
+    setStatus(`Done in ${seconds}s${note}`);
   } catch (error) {
     setStatus(error.message, true);
   } finally {
@@ -319,6 +371,35 @@ function showResult(data) {
   $("q-crowded").textContent = q.crowded_labels;
   $("counts").textContent = `${data.dots} dots · ${data.lines} line${data.lines === 1 ? "" : "s"}`;
   $("pdf").href = data.pdf_url;
+  $("style-used").textContent = data.style;
+
+  $("ai-note").style.display = data.ai_error ? "block" : "none";
+  $("ai-note").textContent = data.ai_error || "";
+
+  const plan = data.plan;
+  $("plan").style.display = plan ? "grid" : "none";
+  if (plan) {
+    $("plan-img").src = plan.overlay_png;
+    $("plan-subject").textContent = plan.subject;
+    $("plan-meta").textContent = `Looks like a ${plan.image_kind.replace("_", " ")}. Green boxes: must include. Red: ignore.`;
+    const coverage = Object.fromEntries(q.parts.map((p) => [p.name, p.coverage]));
+    $("plan-parts").innerHTML = "";
+    plan.must_include.forEach((name) => {
+      const c = coverage[name] ?? 0;
+      const chip = document.createElement("span");
+      chip.className = "part";
+      chip.textContent = `${name} ${Math.round(c * 100)}%`;
+      chip.style.background = c >= 0.7 ? "var(--good)" : c >= 0.4 ? "var(--warn)" : "var(--bad)";
+      $("plan-parts").appendChild(chip);
+    });
+    $("plan-ignore").textContent = plan.ignore.length ? `Ignoring: ${plan.ignore.join(", ")}` : "";
+    $("plan-dots").innerHTML = `AI suggests about <b>${plan.suggested_dots}</b> dots. <a href="#" id="use-dots">Use that</a>`;
+    $("use-dots").addEventListener("click", (e) => {
+      e.preventDefault();
+      $("dots").value = $("dots-range").value = plan.suggested_dots;
+      $("form").requestSubmit();
+    });
+  }
 }
 
 function svgBlobUrl(which) {

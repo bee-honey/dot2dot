@@ -50,19 +50,19 @@ EDGE_CLIP = 4
 
 def extract_paths(image: np.ndarray) -> list[Path]:
     mask = subject_mask(image)
-    outline = _largest_contour(mask)
-    if outline is None:
+    # On a plain background the paint-bucket fill is reliable and catches
+    # parts the model sometimes leaves out (e.g. a penguin's orange feet).
+    _, painted = lineart.find_subject(image)
+    if painted is not None:
+        mask = np.maximum(mask, painted)
+    if np.count_nonzero(mask) < lineart.MIN_SILHOUETTE_FRACTION * mask.size:
         raise ValueError("Couldn't find a subject in the photo")
 
-    outer = Path(outline, closed=True, essential=True)
     faces = detect_faces(image)
-    interior = lineart.trace_ink(
-        sketch_lines(image, mask, faces),
-        band=lineart.silhouette_band(outer, image.shape),
-        include_fills=False,  # dark masses (hair, shadows) aren't lines
-    )
+    # Dark masses (hair, shadows) aren't lines, so skip fill outlines.
+    interior = lineart.trace_ink(sketch_lines(image, mask, faces), include_fills=False)
     interior = [_weight_by_faces(p, faces) for p in interior]
-    return _drop_frame_edges(outer, image.shape) + interior
+    return lineart.assemble(mask, interior, EDGE_CLIP)
 
 
 def subject_mask(image: np.ndarray) -> np.ndarray:
@@ -131,24 +131,6 @@ def _weight_by_faces(path: Path, faces: list[tuple[int, int, int, int]]) -> Path
         if inside.mean() > 0.5:
             return replace(path, weight=FACE_WEIGHT)
     return path
-
-
-def _largest_contour(mask: np.ndarray) -> np.ndarray | None:
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    if not contours:
-        return None
-    largest = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(largest) < lineart.MIN_SILHOUETTE_FRACTION * mask.size:
-        return None
-    return largest.reshape(-1, 2).astype(np.float64)
-
-
-def _drop_frame_edges(outer: Path, shape: tuple[int, ...]) -> list[Path]:
-    """Remove silhouette stretches that just run along the image border."""
-    border = np.zeros(shape[:2], np.uint8)
-    border[:EDGE_CLIP, :] = border[-EDGE_CLIP:, :] = 255
-    border[:, :EDGE_CLIP] = border[:, -EDGE_CLIP:] = 255
-    return lineart.clip_paths([outer], border)
 
 
 @lru_cache(maxsize=1)
