@@ -97,7 +97,8 @@ class PuzzleOut(BaseModel):
     quality: QualityOut
     pdf_url: str
     plan: PlanOut | None = None
-    lines_png: str | None = None  # the pencil-sketch line drawing (sketch style only)
+    sketch_png: str | None = None  # raw pencil sketch of the picture (reference)
+    lines_png: str | None = None  # cleaned line drawing that Sketch style traces (reference)
     ai_error: str | None = None  # set when an AI step failed and we carried on without it
     mystery_level: int = 0
     judge: str | None = None  # which judge ran the guess test: clip | openai
@@ -185,11 +186,17 @@ def get_planner() -> OpenAIPlanner | None:
     return _planner
 
 
-def _sketch_preview(picture) -> str:
+def _sketch_previews(picture) -> tuple[str | None, str | None]:
+    """(pencil sketch, cleaned line drawing) as data URLs; None if they can't be made."""
     from dot2dot import sketch
     from dot2dot.preprocess import resize
 
-    return _png_data_url(sketch.preview(resize(picture, 1000)))
+    try:
+        image = resize(picture, 1000)
+        pencil = cv2.cvtColor(sketch.pencil_sketch(image), cv2.COLOR_GRAY2BGR)
+        return _png_data_url(pencil), _png_data_url(sketch.preview(image))
+    except Exception:  # a reference image must never break puzzle generation
+        return None, None
 
 
 def _png_data_url(image) -> str:
@@ -299,6 +306,8 @@ def create_puzzle(
     filename = f"{Path(image.filename or 'puzzle').stem}.pdf"
     pdfs.put(puzzle_id, filename, pdf_bytes(puzzle, title=title or "Connect the Dots"))
 
+    sketch_png, lines_png = _sketch_previews(picture)
+
     plan_out = None
     if plan is not None:
         preview = picture if max(picture.shape[:2]) <= 900 else cv2.resize(
@@ -333,7 +342,8 @@ def create_puzzle(
         ),
         pdf_url=f"/api/puzzles/{puzzle_id}/pdf",
         plan=plan_out,
-        lines_png=_sketch_preview(picture) if result.style == "sketch" else None,
+        sketch_png=sketch_png,
+        lines_png=lines_png,
         ai_error=ai_error,
         mystery_level=level,
         judge=judge_kind if test else None,

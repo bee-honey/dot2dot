@@ -290,9 +290,18 @@
         </div>
       </div>
 
-      <details class="card check" id="lines-card" style="display:none" open>
-        <summary>Line drawing (the pencil sketch the puzzle is traced from)</summary>
-        <img id="lines-img" alt="Line drawing" style="width:100%;max-width:700px;display:block;margin-top:8px">
+      <details class="card check" id="sketch-card" style="display:none" open>
+        <summary>Pencil sketch (reference)</summary>
+        <div class="panels" style="margin-top:10px">
+          <div>
+            <div class="hint" style="margin-bottom:6px"><b>Pencil sketch</b>: the whole picture as a pencil drawing</div>
+            <img id="sketch-img" alt="Pencil sketch" style="width:100%;display:block;border:1px solid var(--line);border-radius:8px">
+          </div>
+          <div>
+            <div class="hint" style="margin-bottom:6px"><b>Line drawing</b>: background removed, the lines Sketch style traces</div>
+            <img id="lines-img" alt="Line drawing" style="width:100%;display:block;border:1px solid var(--line);border-radius:8px">
+          </div>
+        </div>
       </details>
 
       <details class="card check">
@@ -425,7 +434,8 @@ function showResult(data) {
   $("puzzle").innerHTML = data.puzzle_svg;
   $("solution").innerHTML = data.solution_svg;
   $("check").src = data.check_png;
-  $("lines-card").style.display = data.lines_png ? "block" : "none";
+  $("sketch-card").style.display = data.sketch_png ? "block" : "none";
+  if (data.sketch_png) $("sketch-img").src = data.sketch_png;
   if (data.lines_png) $("lines-img").src = data.lines_png;
 
   const q = data.quality;

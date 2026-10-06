@@ -56,3 +56,10 @@ def test_rejects_bad_settings(client, square_image):
 
 def test_unknown_pdf_is_404(client):
     assert client.get("/api/puzzles/nope/pdf").status_code == 404
+
+
+def test_pencil_sketch_reference_is_returned_for_every_style(client, square_image):
+    for style in ("auto", "outline"):
+        body = upload(client, square_image, dots="20", style=style).json()
+        assert body["sketch_png"].startswith("data:image/png;base64,")
+        assert body["lines_png"].startswith("data:image/png;base64,")
