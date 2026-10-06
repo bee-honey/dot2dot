@@ -93,7 +93,10 @@ def run_guess_test(
     """Blind-guess the original, the unsolved page and the answer key, then grade.
 
     Pass `truth` (a previous guess of the original) to skip guessing it again.
+    Judges with their own decision logic (a trained model) provide `judge_puzzle`.
     """
+    if hasattr(judge, "judge_puzzle"):
+        return judge.judge_puzzle(original, puzzle_page, answer_key, truth)
     images = [puzzle_page, answer_key] + ([] if truth else [original])
     # The image guesses are independent, so ask them in parallel threads.
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -176,6 +179,15 @@ class OpenAIJudge:
             raise RuntimeError("OPENAI_API_KEY is not set (add it to your .env file)")
         self.model = model or config.openai_model(DEFAULT_OPENAI_MODEL)
         self._client = OpenAI(api_key=api_key)
+        # Running token totals, to report what a batch of labelling cost.
+        self.input_tokens = 0
+        self.output_tokens = 0
+
+    def _track(self, response) -> None:
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            self.input_tokens += usage.input_tokens or 0
+            self.output_tokens += usage.output_tokens or 0
 
     def guess(self, image: np.ndarray) -> Guess:
         response = self._client.responses.create(
@@ -191,6 +203,7 @@ class OpenAIJudge:
             text={"format": {"type": "json_schema", "name": "guess", "schema": GUESS_SCHEMA, "strict": True}},
             temperature=0,  # same image, same answer: needed to compare settings fairly
         )
+        self._track(response)
         data = json.loads(response.output_text)
         return Guess(data["label"].strip(), float(min(max(data["confidence"], 0), 1)), data["alternatives"][:3])
 
@@ -202,5 +215,6 @@ class OpenAIJudge:
             text={"format": {"type": "json_schema", "name": "grade", "schema": GRADE_SCHEMA, "strict": True}},
             temperature=0,
         )
+        self._track(response)
         matches = json.loads(response.output_text)["matches"]
         return [bool(m) for m in (matches + [False] * len(guesses))[: len(guesses)]]

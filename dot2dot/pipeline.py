@@ -100,6 +100,24 @@ def build(
     reference = extract_paths(image, style)
     if plan is not None:
         reference = apply_plan(reference, plan, image)
+    puzzle = assemble(reference, width, height, num_dots, max_paths, mystery_level, seed)
+    return Result(puzzle, reference, style, plan)
+
+
+def assemble(
+    reference: list[Path],
+    width: int,
+    height: int,
+    num_dots: int,
+    max_paths: int | None = None,
+    mystery_level: int = 0,
+    seed: bytes = b"",
+) -> Puzzle:
+    """Turn traced paths into a numbered puzzle: select, place dots, order, label.
+
+    `build` gets the paths from an image; the dataset tools pass in strokes
+    from drawings directly.
+    """
     if not reference:
         raise ValueError("No clear subject found in the image")
     paths = select_paths(reference, num_dots, max_paths)
@@ -114,7 +132,7 @@ def build(
             spacing = sum(p.length() for p in paths) / num_dots
             paths = [replace(p, weight=p.weight * mystery.FEATURE_WEIGHT) if mystery.is_feature(p, spacing) else p
                      for p in paths]
-        paths = paths + mystery.add_fillers(paths, image.shape, num_dots, mystery_level, seed)
+        paths = paths + mystery.add_fillers(paths, (height, width), num_dots, mystery_level, seed)
 
     counts = allocate_dots(paths, num_dots)
     simplified = [replace(p, points=simplify(p, n)) for p, n in zip(paths, counts)]
@@ -150,4 +168,4 @@ def build(
         Dot(n, float(x), float(y), float(dx), float(dy), bool(ring))
         for n, (x, y), (dx, dy), ring in zip(numbers, points, directions, rings)
     ]
-    return Result(Puzzle(width, height, dots, strokes, font_size), reference, style, plan)
+    return Puzzle(width, height, dots, strokes, font_size)

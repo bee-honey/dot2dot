@@ -108,6 +108,7 @@ class ConfigOut(BaseModel):
     ai_available: bool
     ai_model: str | None
     clip_available: bool  # local CLIP judge installed (free, no API key)
+    trained_available: bool  # distilled judge (CLIP + trained head) available
 
 
 class _PdfCache:
@@ -134,11 +135,24 @@ pdfs = _PdfCache(CACHE_SIZE)
 _planner: OpenAIPlanner | None = None
 _openai_judge: OpenAIJudge | None = None
 CLIP_AVAILABLE = importlib.util.find_spec("open_clip") is not None
+_trained_judge = None
+
+
+def trained_available() -> bool:
+    from dot2dot.trained_judge import HEAD_FILE
+
+    return CLIP_AVAILABLE and HEAD_FILE.exists()
 
 
 def get_judge(kind: str = "clip"):
-    """The shared judge for guess tests: local CLIP (free) or OpenAI. None if unavailable."""
-    global _openai_judge
+    """The shared judge for guess tests: trained, local CLIP (free) or OpenAI. None if unavailable."""
+    global _openai_judge, _trained_judge
+    if kind == "trained":
+        if _trained_judge is None and trained_available():
+            from dot2dot.trained_judge import TrainedJudge
+
+            _trained_judge = TrainedJudge()
+        return _trained_judge
     if kind == "openai":
         if _openai_judge is None and config.openai_api_key():
             _openai_judge = OpenAIJudge()
@@ -187,6 +201,7 @@ def get_config() -> ConfigOut:
         ai_available=available,
         ai_model=config.openai_model(DEFAULT_OPENAI_MODEL) if available else None,
         clip_available=CLIP_AVAILABLE,
+        trained_available=trained_available(),
     )
 
 
@@ -203,7 +218,7 @@ def create_puzzle(
     request: str = Form(""),
     mystery: str = Form("0"),  # "0", "1", "2" or "auto" (AI picks the level)
     guess_test: bool = Form(False),
-    judge_kind: str = Form("clip", alias="judge"),  # clip (local, free) | openai
+    judge_kind: str = Form("clip", alias="judge"),  # trained | clip (local, free) | openai
 ) -> PuzzleOut:
     if style not in STYLES:
         raise HTTPException(400, f"style must be one of: {', '.join(STYLES)}")
@@ -238,12 +253,14 @@ def create_puzzle(
         return build(picture, num_dots=dots, max_paths=max_paths, style=style, plan=plan, mystery_level=level)
 
     test, candidates = None, []
-    if judge_kind not in ("clip", "openai"):
-        raise HTTPException(400, "judge must be clip or openai")
+    if judge_kind not in ("trained", "clip", "openai"):
+        raise HTTPException(400, "judge must be trained, clip or openai")
     judge = get_judge(judge_kind) if (guess_test or mystery == "auto") else None
     if (guess_test or mystery == "auto") and judge is None:
-        ai_error = ("OpenAI judge unavailable: set OPENAI_API_KEY in .env" if judge_kind == "openai"
-                    else "Local CLIP judge unavailable: pip install open_clip_torch")
+        ai_error = {
+            "openai": "OpenAI judge unavailable: set OPENAI_API_KEY in .env",
+            "trained": "Trained judge unavailable: run scripts/train_judge.py (needs the CLIP extra)",
+        }.get(judge_kind, "Local CLIP judge unavailable: pip install -e '.[clip]'")
     try:
         if mystery == "auto" and judge is not None:
             try:

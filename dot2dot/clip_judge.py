@@ -75,8 +75,11 @@ class CLIPJudge:
         if label not in self.labels:
             self.set_labels(self.labels + [label])
 
-    def probabilities(self, image: np.ndarray) -> np.ndarray:
-        """Probability of each vocabulary label for a BGR image (softmax over labels)."""
+    def probabilities(self, image: np.ndarray, return_vector: bool = False):
+        """Probability of each vocabulary label for a BGR image (softmax over labels).
+
+        With `return_vector`, also returns the image's normalized CLIP vector.
+        """
         from PIL import Image
 
         torch = self._torch
@@ -86,7 +89,8 @@ class CLIPJudge:
             v = self.model.encode_image(pixels)
             v = v / v.norm(dim=-1, keepdim=True)
             logits = LOGIT_SCALE * v @ self.text_vectors.T
-            return logits.softmax(dim=-1)[0].float().cpu().numpy()
+            probs = logits.softmax(dim=-1)[0].float().cpu().numpy()
+            return (probs, v[0].float().cpu().numpy()) if return_vector else probs
 
     def guess(self, image: np.ndarray) -> Guess:
         probs = self.probabilities(image)

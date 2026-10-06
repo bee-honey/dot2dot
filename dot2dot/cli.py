@@ -32,8 +32,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--guess-test", action="store_true", help="ask a judge what it sees before/after solving")
     parser.add_argument(
-        "--judge", choices=["clip", "openai"], default="clip",
-        help="who judges the guess test / auto-tune: clip (local, free; default) or openai",
+        "--judge", choices=["trained", "clip", "openai"], default="trained",
+        help="who judges the guess test / auto-tune: trained (CLIP + learned head; default), "
+        "clip (zero-shot) or openai",
     )
     parser.add_argument("--request", default="", help='instructions for the AI planner, e.g. "easy, for a 5-year-old"')
     parser.add_argument(
@@ -80,7 +81,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.mystery == "auto" or args.guess_test:
             from dot2dot.judge import OpenAIJudge, judge_images, run_guess_test, tune_mystery
 
-            if args.judge == "clip":
+            if args.judge == "trained":
+                from dot2dot.trained_judge import TrainedJudge
+
+                judge = TrainedJudge()
+            elif args.judge == "clip":
                 from dot2dot.clip_judge import default_clip_judge
 
                 judge = default_clip_judge()

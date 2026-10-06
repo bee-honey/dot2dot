@@ -133,3 +133,19 @@ def test_clip_judge_reads_answer_keys_without_numbers(square_image):
     page, plain_key = judge_images(NoNumbers(), puzzle)
     _, numbered_key = judge_images(object(), puzzle)
     assert (plain_key != numbered_key).any()  # numbers left off for CLIP
+
+
+def test_trained_judge_decides_with_its_threshold():
+    from dot2dot.trained_judge import TrainedJudge
+
+    class FakeClip:
+        def guess(self, image):
+            return Guess("penguin" if image.mean() > 100 else "squiggle", 0.9, [])
+
+    judge = TrainedJudge.__new__(TrainedJudge)  # skip loading CLIP and the saved head
+    judge.clip, judge.threshold = FakeClip(), 0.6
+    judge.probability = lambda image, subject, is_answer_key: 0.9 if is_answer_key else 0.2
+    bright, dark = np.full((8, 8, 3), 200, np.uint8), np.zeros((8, 8, 3), np.uint8)
+    test = run_guess_test(judge, bright, dark, bright)
+    assert test.truth == "penguin" and test.verdict == "mystery"
+    assert test.before.label == "squiggle" and test.after.label == "penguin"

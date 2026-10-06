@@ -124,7 +124,9 @@ dot2dot/
 │   ├── planner.py        # AI planner (OpenAI vision → structured plan)
 │   ├── judge.py          # guess test + mystery auto-tune (OpenAI judge)
 │   ├── clip_judge.py     # local CLIP judge (free, offline)
-│   ├── data/             # Quick, Draw! category names (CLIP vocabulary)
+│   ├── trained_judge.py  # CLIP + trained head (distilled from the OpenAI judge)
+│   ├── quickdraw.py      # Quick, Draw! doodles → paths (dataset building)
+│   ├── data/             # Quick, Draw! category names, trained judge head
 │   ├── mystery.py        # filler strokes, reveal order, dot spread
 │   ├── raster.py         # render puzzles as images (for the judge, grids)
 │   ├── guidance.py       # applies a plan: ignore, weight parts, repair
@@ -138,7 +140,7 @@ dot2dot/
 │   │   └── static/index.html  # single-page UI
 │   └── __main__.py       # `python -m dot2dot`
 ├── samples/              # sample images + generator script (private/ is git-ignored)
-├── scripts/              # eval_samples.py (visual grid), compare_judges.py (CLIP vs LLM)
+├── scripts/              # eval_samples.py, compare_judges.py, make_dataset.py, train_judge.py
 ├── tests/
 ├── docs/
 ├── pyproject.toml
@@ -239,7 +241,8 @@ In multi-line puzzles, a **ringed dot** marks the start of a new line: lift the 
 - [x] AI guess test: is the picture hidden before solving and clear after?
 - [x] Mystery mode with AI auto-tune (`--mystery auto`)
 - [x] Local judge with CLIP (free, offline): 79% verdict agreement with the LLM judge, ~60x faster
-- [ ] Dataset (Quick, Draw!) + distill the judge into a small trained model
+- [x] Dataset (Quick, Draw!) + distill the judge into a small trained model (AUC 0.75 → 0.82)
+- [ ] More data and categories; learn mystery settings directly; user feedback (thumbs up/down)
 - [x] Subject classification via the planner (coloring page / cartoon / photo / render)
   - Portrait: face outline, hair silhouette, key facial features
   - Animal: silhouette + major features
@@ -273,9 +276,10 @@ it numbers small give-away features (eyes) last.
 **Guess test**: a judge sees the unsolved page, then the answer key, with
 no hints, and says what it sees. Two judges:
 
-| Judge | Cost | Speed | Agreement with OpenAI judge |
+| Judge | Cost | Speed | Verdict agreement with OpenAI judge (24 real puzzles) |
 |-------|------|-------|-----------------------------|
-| `clip` (default): local CLIP model, picks from 354 categories | free, offline | ~50 ms | 79% verdicts (92% "guessable before", 88% "recognizable after") |
+| `trained` (default): CLIP + a small head trained to imitate the OpenAI judge | free, offline | ~50 ms | 88% |
+| `clip`: zero-shot CLIP, picks from 354 categories | free, offline | ~50 ms | 79% |
 | `openai`: vision LLM, names anything | ~1¢ | ~3 s | n/a |
 
 Install the local judge with `pip install -e ".[clip]"` (PyTorch, ~600 MB model
@@ -293,6 +297,34 @@ python scripts/eval_samples.py --styles auto --mystery 0 1 2 --judge --dots 200
 On the sample set: without mystery mode, 4 of 8 puzzles were guessable from
 the dots alone; auto-tune turns most into mysteries, and falls back to level 0
 when fillers would make the subject unrecognizable (the Hulk coloring page).
+
+## Training the judge (knowledge distillation)
+
+The `trained` judge was built by teaching a small model to imitate the
+OpenAI judge, so the app gets most of its judgment for free:
+
+```bash
+python scripts/make_dataset.py --categories 100 --per-category 3 --label   # 600 puzzles, ~$2.80 of labels
+python scripts/train_judge.py                                              # trains in seconds
+```
+
+1. **Data**: 300 doodles from 100 categories of Google's
+   [Quick, Draw!](https://quickdraw.withgoogle.com/data) (CC BY 4.0),
+   each made into a plain and a mystery puzzle (600 puzzles).
+2. **Labels**: the OpenAI judge makes blind guesses on every unsolved page
+   and answer key: 1,200 examples of "would it name the subject?".
+3. **Model**: frozen CLIP features → a small neural network (one hidden
+   layer, 33K weights, 132 KB file), trained with PyTorch.
+4. **Evaluation**: 5-fold cross-validation grouped by category, so test
+   folds contain only subjects the model never saw.
+
+| | ROC AUC (unseen categories) | Verdicts on 24 real puzzles |
+|---|---|---|
+| zero-shot CLIP | 0.752 | 79% |
+| trained judge | **0.818** | **88%** |
+
+Accuracy barely moves (87% of labels are "no", so always answering "no" scores 87%);
+ROC AUC, which measures ranking and ignores the imbalance, is the honest metric.
 
 ## AI planner (optional)
 

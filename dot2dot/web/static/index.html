@@ -217,6 +217,7 @@
         <span class="hint">A judge looks at the unsolved page, then the answer key, and says what it sees in each. A good mystery puzzle fools it before solving. Also used by Mystery: Auto.</span>
         <label class="field">Judge
           <select id="judge">
+            <option value="trained" disabled>Trained: CLIP + our learned head (free, instant, best local)</option>
             <option value="clip">Local CLIP: free, instant</option>
             <option value="openai" disabled>OpenAI: more accurate, ~3 s per test</option>
           </select>
@@ -324,6 +325,10 @@ fetch("/api/config").then((r) => r.json()).then((cfg) => {
     $("mystery").querySelector('option[value="auto"]').disabled = false;
   }
   if (cfg.ai_available) $("judge").querySelector('option[value="openai"]').disabled = false;
+  if (cfg.trained_available) {
+    $("judge").querySelector('option[value="trained"]').disabled = false;
+    $("judge").value = "trained";
+  }
   if (!cfg.clip_available && cfg.ai_available) $("judge").value = "openai";
   if (!cfg.ai_available) return;
   $("ai-box").classList.add("available");
@@ -378,7 +383,7 @@ $("form").addEventListener("submit", async (e) => {
   if ($("guess-test").checked) body.append("guess_test", "true");
 
   go.disabled = true;
-  const local = $("judge").value === "clip";
+  const local = $("judge").value !== "openai";
   const busy = $("mystery").value === "auto"
     ? `Trying mystery levels and judging each (${local ? "a few seconds; the first run loads CLIP" : "about 15 s"})…`
     : $("ai").checked || $("guess-test").checked ? "Generating and asking the AI…" : "Generating…";
@@ -433,12 +438,13 @@ function showResult(data) {
     const colors = { "mystery": "var(--good)", "too easy": "var(--warn)", "unrecognizable": "var(--bad)" };
     const labels = { "mystery": "Mystery: hidden until solved", "too easy": "Too easy: guessable from the dots", "unrecognizable": "Unrecognizable even when solved" };
     $("verdict").textContent = labels[test.verdict];
-    $("judge-used").textContent = data.judge === "clip" ? "judged by local CLIP" : "judged by OpenAI";
+    $("judge-used").textContent = { clip: "judged by local CLIP", trained: "judged by the trained judge", openai: "judged by OpenAI" }[data.judge];
     $("verdict").style.background = colors[test.verdict];
     const show = (g, ok) => `${g.label} ${ok ? "✓" : "✗"} <span class="hint">(${Math.round(g.confidence * 100)}% sure)</span>`;
     $("g-truth").textContent = test.truth;
-    document.querySelectorAll(".guess .k")[1].textContent = data.judge === "clip" ? "Before solving, CLIP guessed" : "Before solving, AI guessed";
-    document.querySelectorAll(".guess .k")[2].textContent = data.judge === "clip" ? "After solving, CLIP guessed" : "After solving, AI guessed";
+    const who = { clip: "CLIP", trained: "the trained judge", openai: "the AI" }[data.judge];
+    document.querySelectorAll(".guess .k")[1].textContent = `Before solving, ${who} guessed`;
+    document.querySelectorAll(".guess .k")[2].textContent = `After solving, ${who} guessed`;
     $("g-before").innerHTML = show(test.before, test.before_correct);
     $("g-after").innerHTML = show(test.after, test.after_correct);
     $("tried").innerHTML = data.candidates.length

@@ -345,6 +345,33 @@ give a `(16, M, 2)` grid of differences, with no nested loops.
   optional dependency: `pip install -e ".[clip]"` adds the heavy ML stack
   only when you want it.
 
+### Training a model: `scripts/train_judge.py`
+The core PyTorch training loop is only a few lines:
+
+```python
+optimizer.zero_grad()                    # clear last step's gradients
+loss = loss_fn(model(inputs), targets)   # forward pass: predict, measure error
+loss.backward()                          # backward pass: gradient of the error w.r.t. every weight
+optimizer.step()                         # move each weight a little "downhill"
+```
+
+Concepts used:
+- **Knowledge distillation**: an expensive "teacher" (the OpenAI judge)
+  labels data; a cheap "student" (CLIP + small head) learns to copy it.
+- **Transfer learning / frozen backbone**: CLIP stays unchanged and only
+  a 33K-weight head is trained. With ~1,000 examples, training all of
+  CLIP's 150M weights would just memorize the data.
+- **Class imbalance**: only 13% positives. `pos_weight` in the loss counts
+  each positive more, and ROC AUC (not accuracy) is reported, because
+  "always no" already scores 87% accuracy.
+- **Grouped cross-validation** (`GroupKFold` by category): test folds hold
+  categories the model never saw. Splitting randomly would leak near-identical
+  doodles of the same category into train and test and overstate the score.
+- **Regularization**: `weight_decay` (L2) and `Dropout` against
+  overfitting; the sweep showed 128 hidden units doing *worse* than 16-64.
+- **Model selection by measurement**: logistic regression (AUC 0.80) vs
+  the small MLP (0.82), three random seeds each to make sure the gap isn't noise.
+
 ### A dataclass gotcha
 `@dataclass` generates `__eq__` comparing every field. With a NumPy array
 field, `a == b` returns an array, not a bool, so `path in paths` raises an
