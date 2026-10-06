@@ -55,16 +55,41 @@ def _cost(path: Path, spacing: float) -> float:
     return path.length() + SPACING_PER_RADIAN * spacing * turning(path)
 
 
-def allocate_dots(paths: list[Path], total: int) -> list[int]:
-    """Split `total` dots across paths by length, curviness and importance."""
+def allocate_dots(paths: list[Path], total: int, min_spacing: float | None = None) -> list[int]:
+    """Split `total` dots across paths by length, curviness and importance.
+
+    With `min_spacing`, no path gets more dots than fit at that spacing
+    (a small eye loop can't soak up 40 dots, whatever its weight); the dots
+    it can't take go to paths that still have room.
+    """
     spacing = sum(p.length() for p in paths) / max(total, 1)
     costs = np.array([_cost(p, spacing) * p.weight for p in paths])
-    shares = costs / costs.sum() * total
-    counts = np.floor(shares).astype(int)
-    # Hand the leftover dots to the paths that lost the most to rounding.
-    leftover = total - counts.sum()
-    for i in np.argsort(shares - counts)[::-1][:leftover]:
-        counts[i] += 1
+    caps = np.array([
+        max(min_dots(p), int(p.length() / min_spacing) + (0 if p.closed else 1)) if min_spacing else total
+        for p in paths
+    ])
+    counts = np.zeros(len(paths), dtype=int)
+    open_ = np.ones(len(paths), dtype=bool)
+    remaining = total
+    # Share out, cap, and re-share what the capped paths couldn't take.
+    for _ in range(10):
+        if remaining <= 0 or not open_.any():
+            break
+        shares = np.where(open_, costs, 0) / max(costs[open_].sum(), 1e-9) * remaining
+        add = np.minimum(np.floor(shares).astype(int), caps - counts)
+        # Hand the leftover dots to the paths that lost the most to rounding.
+        leftover = remaining - add.sum()
+        for i in np.argsort(np.where(open_, shares - np.floor(shares), -1))[::-1]:
+            if leftover <= 0 or not open_[i]:
+                break
+            if counts[i] + add[i] < caps[i]:
+                add[i] += 1
+                leftover -= 1
+        counts += add
+        remaining -= add.sum()
+        open_ &= counts < caps
+        if add.sum() == 0:
+            break
     return [max(int(c), min_dots(p)) for c, p in zip(counts, paths)]
 
 
@@ -93,7 +118,7 @@ def declutter(paths: list[Path], image_size: int) -> list[Path]:
     own dot at the same spot, and the stacked numbers become unreadable.
     Paths are processed in drawing order; the first one to claim a spot keeps it.
     """
-    radius = 0.6 * MIN_SPACING_FRACTION * image_size
+    radius = 0.8 * MIN_SPACING_FRACTION * image_size
     claimed = np.zeros((0, 2))
     result = []
     for path in paths:

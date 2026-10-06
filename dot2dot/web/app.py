@@ -97,6 +97,7 @@ class PuzzleOut(BaseModel):
     quality: QualityOut
     pdf_url: str
     plan: PlanOut | None = None
+    lines_png: str | None = None  # the pencil-sketch line drawing (sketch style only)
     ai_error: str | None = None  # set when an AI step failed and we carried on without it
     mystery_level: int = 0
     judge: str | None = None  # which judge ran the guess test: clip | openai
@@ -182,6 +183,13 @@ def get_planner() -> OpenAIPlanner | None:
     if _planner is None and config.openai_api_key():
         _planner = OpenAIPlanner()
     return _planner
+
+
+def _sketch_preview(picture) -> str:
+    from dot2dot import sketch
+    from dot2dot.preprocess import resize
+
+    return _png_data_url(sketch.preview(resize(picture, 1000)))
 
 
 def _png_data_url(image) -> str:
@@ -325,6 +333,7 @@ def create_puzzle(
         ),
         pdf_url=f"/api/puzzles/{puzzle_id}/pdf",
         plan=plan_out,
+        lines_png=_sketch_preview(picture) if result.style == "sketch" else None,
         ai_error=ai_error,
         mystery_level=level,
         judge=judge_kind if test else None,

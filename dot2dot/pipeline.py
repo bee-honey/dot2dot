@@ -5,7 +5,7 @@ from pathlib import Path as FilePath
 
 import numpy as np
 
-from dot2dot import lineart, mystery, photo
+from dot2dot import lineart, mystery, photo, sketch
 from dot2dot.contours import find_outlines, make_mask
 from dot2dot.guidance import apply_plan
 from dot2dot.labels import choose_font_size, outward_normals, place_labels
@@ -13,11 +13,11 @@ from dot2dot.models import Dot, Path, Puzzle, Stroke
 from dot2dot.order import order_paths
 from dot2dot.planner import Plan
 from dot2dot.preprocess import load_image, resize, to_grayscale
-from dot2dot.simplify import allocate_dots, declutter, max_readable_dots, select_paths, simplify
+from dot2dot.simplify import MIN_SPACING_FRACTION, allocate_dots, declutter, max_readable_dots, select_paths, simplify
 
-STYLES = ("auto", "outline", "lineart", "photo")
+STYLES = ("auto", "sketch", "outline", "lineart", "photo")
 # Line art and photos keep more detail, so they're processed at a higher resolution.
-WORKING_SIZE = {"outline": 800, "lineart": 1000, "photo": 1000}
+WORKING_SIZE = {"outline": 800, "lineart": 1000, "photo": 1000, "sketch": 1000}
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,8 @@ def extract_paths(image: np.ndarray, style: str) -> list[Path]:
         return lineart.extract_paths(image)
     if style == "photo":
         return photo.extract_paths(image)
+    if style == "sketch":
+        return sketch.extract_paths(image)
     raise ValueError(f"Unknown style {style!r}; choose from {', '.join(STYLES)}")
 
 
@@ -134,7 +136,7 @@ def assemble(
                      for p in paths]
         paths = paths + mystery.add_fillers(paths, (height, width), num_dots, mystery_level, seed)
 
-    counts = allocate_dots(paths, num_dots)
+    counts = allocate_dots(paths, num_dots, min_spacing=MIN_SPACING_FRACTION * max(width, height))
     simplified = [replace(p, points=simplify(p, n)) for p, n in zip(paths, counts)]
     if mystery_level:
         # Start in the page corner, and save small give-away loops (eyes) for last.

@@ -173,6 +173,7 @@
       <label class="field">Style
         <select id="style">
           <option value="auto">Auto (recommended)</option>
+          <option value="sketch">Sketch: pencil-sketch any picture, then trace it (new)</option>
           <option value="lineart">Line art: cartoons &amp; drawings</option>
           <option value="photo">Photo: real pictures of people, pets, things</option>
           <option value="outline">Outline: just the border</option>
@@ -289,6 +290,11 @@
         </div>
       </div>
 
+      <details class="card check" id="lines-card" style="display:none" open>
+        <summary>Line drawing (the pencil sketch the puzzle is traced from)</summary>
+        <img id="lines-img" alt="Line drawing" style="width:100%;max-width:700px;display:block;margin-top:8px">
+      </details>
+
       <details class="card check">
         <summary>Coverage check</summary>
         <div class="legend">
@@ -310,6 +316,7 @@ let lastResult = null;
 
 const STYLE_HINTS = {
   auto: "Picks for you: Line art for drawings on a plain background, Photo for everything else.",
+  sketch: "Turns the picture into a pencil sketch (bold outlines, thin details), removes the background, then traces the sketch. Bold lines get dots first.",
   lineart: "Follows the drawing's dark ink lines, including eyes, emblems and folds. Best for cartoons and comics.",
   photo: "Removes the background, then sketches the subject's features. Faces get extra detail. Takes a few seconds; try 100–200 dots.",
   outline: "Traces only the subject's border. Best for a clear subject on a plain background.",
@@ -418,6 +425,8 @@ function showResult(data) {
   $("puzzle").innerHTML = data.puzzle_svg;
   $("solution").innerHTML = data.solution_svg;
   $("check").src = data.check_png;
+  $("lines-card").style.display = data.lines_png ? "block" : "none";
+  if (data.lines_png) $("lines-img").src = data.lines_png;
 
   const q = data.quality;
   const score = $("score");
