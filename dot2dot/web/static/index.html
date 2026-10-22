@@ -203,6 +203,11 @@
         <input id="max-lines" type="number" min="1" placeholder="no limit">
       </label>
 
+<div class="field">
+          <label><input type="checkbox" id="fine-details"> Keep fine details drawn</label>
+          <p class="hint">Print small eyes, fingers and armor seams instead of dropping them. Easier to recognize before solving; optional for mystery puzzles.</p>
+        </div>
+
       <label class="field">Title
         <input id="title" type="text" value="Connect the Dots">
       </label>
@@ -290,6 +295,28 @@
         </div>
       </div>
 
+      <details class="card check" id="editor-card">
+        <summary>Inspect and correct traced lines</summary>
+        <p id="detail-warning" role="status"></p>
+        <p>Compare the source with the colored extracted lines. If a detail has no line, trace it here.
+          Blue = included, green = important, gray = excluded. Quality measures extracted lines; it cannot certify that every source feature was found.</p>
+        <label>Action <select id="edit-mode">
+          <option value="toggle">Click a line to include / exclude</option>
+          <option value="protect">Click a line to mark / unmark important</option>
+          <option value="draw">Click points to trace a missing detail</option>
+        </select></label>
+        <label><input type="checkbox" id="edit-source" checked> Show original image</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
+          <button type="button" id="finish-path">Finish open line</button>
+          <button type="button" id="close-path">Finish closed shape</button>
+          <button type="button" id="undo-point">Undo point</button>
+          <button type="button" id="reset-paths">Reset edits</button>
+          <button type="button" id="apply-paths">Apply corrections</button>
+        </div>
+        <p id="edit-count" class="hint"></p>
+        <svg id="path-editor" aria-label="Trace correction canvas" style="width:100%;max-height:850px;background:white;touch-action:manipulation"></svg>
+      </details>
+
       <details class="card check" id="sketch-card" style="display:none" open>
         <summary>Pencil sketch (reference)</summary>
         <div class="panels" style="margin-top:10px">
@@ -322,6 +349,7 @@ const $ = (id) => document.getElementById(id);
 const drop = $("drop"), fileInput = $("file"), go = $("go"), status = $("status");
 let chosenFile = null;
 let lastResult = null;
+let editPaths = [], draftPoints = [], pendingEdits = null;
 
 const STYLE_HINTS = {
   auto: "Picks for you: Line art for drawings on a plain background, Photo for everything else.",
@@ -367,6 +395,9 @@ function chooseFile(file) {
   const isHeic = /\.(heic|heif)$/i.test(file.name);
   if (!file.type.startsWith("image/") && !isHeic) { setStatus("Please choose an image file.", true); return; }
   chosenFile = file;
+  pendingEdits = null;
+  lastResult = null;
+  $("results").style.display = "none";
   // Most browsers can't display HEIC, so show the file name instead of a preview.
   drop.innerHTML = isHeic
     ? `<div><strong>${file.name.replace(/[<>&]/g, "")}</strong><br>ready to upload</div><span class="change">click to change</span>`
@@ -386,6 +417,9 @@ $("form").addEventListener("submit", async (e) => {
 
   const body = new FormData();
   body.append("image", chosenFile);
+  body.append("fine_details", $("fine-details").checked ? "true" : "false");
+  if (pendingEdits) body.append("edited_paths", JSON.stringify(pendingEdits));
+  pendingEdits = null;
   body.append("dots", $("dots").value);
   body.append("style", $("style").value);
   body.append("title", $("title").value);
@@ -413,7 +447,7 @@ $("form").addEventListener("submit", async (e) => {
     const seconds = ((performance.now() - started) / 1000).toFixed(1);
     const requested = Number(body.get("dots"));
     const note = data.dots < requested * 0.95
-      ? ` · used ${data.dots} of ${requested} dots; more wouldn't fit legibly in this picture`
+      ? ` · used ${data.dots} of ${requested} picture dots; readability limits reduced the count`
       : "";
     setStatus(`Done in ${seconds}s${note}`);
   } catch (error) {
@@ -427,6 +461,10 @@ const pct = (v) => (v === null ? "n/a" : `${Math.round(v * 100)}%`);
 
 function showResult(data) {
   lastResult = data;
+  editPaths = structuredClone(data.edit_paths).map(p => ({...p, included: true}));
+  draftPoints = [];
+  $("detail-warning").textContent = data.warnings.join(" ");
+  drawEditor();
   $("empty").style.display = "none";
   $("results").style.display = "flex";
 
@@ -446,7 +484,7 @@ function showResult(data) {
   $("q-detail").textContent = pct(q.detail_coverage);
   $("q-accuracy").textContent = pct(q.accuracy);
   $("q-crowded").textContent = q.crowded_labels;
-  $("counts").textContent = `${data.dots} dots · ${data.lines} line${data.lines === 1 ? "" : "s"}`;
+  $("counts").textContent = `${data.dots} dots${data.printed_details ? ` · ${data.printed_details} printed details` : ""} · ${data.lines} line${data.lines === 1 ? "" : "s"}`;
   $("pdf").href = data.pdf_url;
   $("style-used").textContent = data.style + (data.mystery_level ? ` · mystery ${data.mystery_level}` : "");
   $("filler-legend").style.display = data.mystery_level ? "inline" : "none";
@@ -500,6 +538,78 @@ function showResult(data) {
     });
   }
 }
+
+const svgNS = "http://www.w3.org/2000/svg";
+function svgElement(name, attrs) {
+  const el = document.createElementNS(svgNS, name);
+  for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
+  return el;
+}
+function drawEditor() {
+  if (!lastResult) return;
+  const canvas = $("path-editor");
+  canvas.replaceChildren();
+  canvas.setAttribute("viewBox", `0 0 ${lastResult.width} ${lastResult.height}`);
+  if ($("edit-source").checked) canvas.appendChild(svgElement("image", {
+    href: lastResult.source_png, width: lastResult.width, height: lastResult.height, opacity: 0.5
+  }));
+  editPaths.forEach((p, i) => {
+    const line = svgElement(p.closed ? "polygon" : "polyline", {
+      points: p.points.map(x => x.join(",")).join(" "), fill: "none",
+      stroke: !p.included ? "#777" : p.protected ? "#00853f" : "#1475d1",
+      "stroke-width": 2, "vector-effect": "non-scaling-stroke",
+      "stroke-dasharray": p.included ? "none" : "5 4", "data-path": i,
+      "pointer-events": "stroke", style: "cursor:pointer"
+    });
+    // Wide transparent hit area makes thin lines selectable at normal zoom.
+    const hit = line.cloneNode();
+    hit.setAttribute("stroke", "transparent"); hit.setAttribute("stroke-width", "12");
+    canvas.append(line, hit);
+  });
+  canvas.appendChild(svgElement("polyline", {points: draftPoints.map(x => x.join(",")).join(" "),
+    fill: "none", stroke: "#c43c21", "stroke-width": 3, "pointer-events": "none"}));
+  draftPoints.forEach(([cx, cy]) => canvas.appendChild(svgElement("circle", {
+    cx, cy, r: 4, fill: "#c43c21", "pointer-events": "none"
+  })));
+  $("edit-count").textContent = `${editPaths.filter(p => p.included).length} included lines · ${editPaths.filter(p => p.included && p.protected).length} important · ${draftPoints.length} pending points`;
+}
+$("path-editor").addEventListener("click", e => {
+  if (!lastResult) return;
+  const mode = $("edit-mode").value;
+  if (mode === "draw") {
+    const point = new DOMPoint(e.clientX, e.clientY).matrixTransform($("path-editor").getScreenCTM().inverse());
+    draftPoints.push([Math.max(0, Math.min(lastResult.width - 1, point.x)), Math.max(0, Math.min(lastResult.height - 1, point.y))]);
+  } else if (e.target.hasAttribute("data-path")) {
+    const path = editPaths[Number(e.target.getAttribute("data-path"))];
+    if (mode === "protect") { path.protected = !path.protected; path.included = true; }
+    else path.included = !path.included;
+  }
+  drawEditor();
+});
+function finishPath(closed) {
+  if (draftPoints.length < (closed ? 3 : 2)) return;
+  editPaths.push({points: draftPoints, closed, essential: false, protected: true, weight: 2.5, included: true});
+  draftPoints = []; drawEditor();
+}
+$("finish-path").onclick = () => finishPath(false);
+$("close-path").onclick = () => finishPath(true);
+$("undo-point").onclick = () => { draftPoints.pop(); drawEditor(); };
+$("edit-source").onchange = drawEditor;
+$("reset-paths").onclick = () => {
+  if (!lastResult) return;
+  editPaths = structuredClone(lastResult.edit_paths).map(p => ({...p, included: true}));
+  draftPoints = []; drawEditor();
+};
+$("apply-paths").onclick = () => {
+  if (!lastResult || go.disabled) return;
+  if (draftPoints.length) { setStatus("Finish the pending line before applying corrections.", true); return; }
+  const included = editPaths.filter(p => p.included).map(({included, ...p}) => p);
+  if (!included.length) { setStatus("Include or trace at least one line.", true); return; }
+  // Edits use the resolved extraction style so the coordinate system stays fixed.
+  $("style").value = lastResult.style; updateHint();
+  pendingEdits = included;
+  $("form").requestSubmit();
+};
 
 function svgBlobUrl(which) {
   const markup = which === "puzzle" ? lastResult.puzzle_svg : lastResult.solution_svg;

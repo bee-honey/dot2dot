@@ -5,6 +5,10 @@ then open http://127.0.0.1:8000.
 """
 
 import base64
+import json
+import math
+
+import numpy as np
 import importlib.util
 import uuid
 from collections import OrderedDict
@@ -21,6 +25,8 @@ from dot2dot import config
 from dot2dot.guidance import plan_overlay
 from dot2dot.pdf import pdf_bytes
 from dot2dot.pipeline import STYLES, build
+from dot2dot.models import Path as DrawingPath
+from dot2dot.preprocess import resize
 from dot2dot.judge import OpenAIJudge, judge_images, run_guess_test, tune_mystery
 from dot2dot.planner import DEFAULT_OPENAI_MODEL, OpenAIPlanner
 from dot2dot.raster import render
@@ -86,9 +92,49 @@ class PlanOut(BaseModel):
     overlay_png: str  # the original image with the plan's boxes drawn on
 
 
+class EditPath(BaseModel):
+    points: list[tuple[float, float]]
+    closed: bool = False
+    essential: bool = False
+    protected: bool = False
+    weight: float = 1.0
+
+
+def parse_edit_paths(raw: str, width: int, height: int) -> list[DrawingPath]:
+    try:
+        items = json.loads(raw)
+        if not isinstance(items, list) or not 1 <= len(items) <= 500:
+            raise ValueError("Provide between 1 and 500 paths")
+        paths = []
+        total_points = 0
+        for item in items:
+            path = EditPath.model_validate(item)
+            total_points += len(path.points)
+            if not 2 <= len(path.points) <= 20000 or total_points > 100000:
+                raise ValueError("Too many or too few path points")
+            if not math.isfinite(path.weight) or not 0.1 <= path.weight <= 10:
+                raise ValueError("Invalid path weight")
+            if any(not (math.isfinite(x) and math.isfinite(y) and 0 <= x < width and 0 <= y < height)
+                   for x, y in path.points):
+                raise ValueError("Path points must lie inside the image")
+            points = np.asarray(path.points, dtype=float)
+            if np.linalg.norm(np.diff(points, axis=0), axis=1).sum() < 1:
+                raise ValueError("Path must contain distinct points")
+            paths.append(DrawingPath(points, path.closed, path.essential, path.weight, protected=path.protected))
+        return paths
+    except (ValueError, TypeError) as error:
+        raise HTTPException(400, f"Invalid edited paths: {error}") from error
+
+
 class PuzzleOut(BaseModel):
+    source_png: str
+    width: int
+    height: int
+    edit_paths: list[EditPath]
+    warnings: list[str] = []
     id: str
     dots: int
+    printed_details: int = 0
     lines: int
     style: str  # style actually used ("auto" resolved)
     puzzle_svg: str
@@ -229,6 +275,8 @@ def create_puzzle(
     style: str = Form("auto"),
     max_lines: int | None = Form(None),
     title: str = Form("Connect the Dots"),
+    fine_details: bool = Form(False),
+    edited_paths: str | None = Form(None),
     ai: bool = Form(False),
     request: str = Form(""),
     mystery: str = Form("0"),  # "0", "1", "2" or "auto" (AI picks the level)
@@ -251,6 +299,9 @@ def create_puzzle(
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
 
+    if edited_paths is not None and len(edited_paths) > 8 * 1024 * 1024:
+        raise HTTPException(413, "Edited paths are too large")
+
     plan, ai_error = None, None
     if ai:
         planner = get_planner()
@@ -264,8 +315,15 @@ def create_puzzle(
 
     max_paths = max_lines or (1 if style == "outline" else None)
 
+    from dot2dot.pipeline import choose_style, WORKING_SIZE
+
+    actual_style = choose_style(picture, plan) if style == "auto" else style
+    working = resize(picture, WORKING_SIZE[actual_style])
+    override = parse_edit_paths(edited_paths, working.shape[1], working.shape[0]) if edited_paths is not None else None
+
     def build_at(level: int):
-        return build(picture, num_dots=dots, max_paths=max_paths, style=style, plan=plan, mystery_level=level)
+        return build(picture, num_dots=dots, max_paths=max_paths, style=actual_style, plan=plan,
+                     mystery_level=level, reference_override=override, fine_details=fine_details)
 
     test, candidates = None, []
     if judge_kind not in ("trained", "clip", "openai"):
@@ -323,9 +381,28 @@ def create_puzzle(
             overlay_png=_png_data_url(plan_overlay(preview, plan)),
         )
 
+    warnings = []
+    if puzzle.details:
+        warnings.append("Fine details are printed on both sheets. This preserves small features but makes the picture easier to guess.")
+    picture_dots = sum(s.end - s.start for s in puzzle.strokes if not s.filler)
+    if picture_dots > dots:
+        warnings.append(f"Used {picture_dots} picture dots to preserve required lines (requested {dots}).")
+    if quality.detail_coverage is not None and quality.detail_coverage < 0.65:
+        warnings.append("Interior details are missing. Inspect the traced lines, protect important details, or increase picture dots.")
+    for name, coverage in quality.parts:
+        if coverage < 0.65:
+            warnings.append(f"Important part needs attention: {name} ({coverage:.0%} traced).")
+    if any(p.protected for p in result.reference):
+        warnings.append("Important lines are reserved before other details; tight dot budgets or line limits may still reduce fidelity.")
+
     return PuzzleOut(
+        source_png=_png_data_url(working), width=puzzle.width, height=puzzle.height,
+        edit_paths=[EditPath(points=p.points.tolist(), closed=p.closed, essential=p.essential,
+                             protected=p.protected, weight=p.weight) for p in result.reference],
+        warnings=warnings,
         id=puzzle_id,
         dots=len(puzzle.dots),
+        printed_details=len(puzzle.details),
         lines=len(puzzle.strokes),
         style=result.style,
         puzzle_svg=to_svg(puzzle),

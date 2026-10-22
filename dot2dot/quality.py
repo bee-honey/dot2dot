@@ -165,6 +165,8 @@ def _reference_masks(puzzle: Puzzle, reference: list[Path], thickness: int = 1):
 
 def _solution_mask(puzzle: Puzzle) -> np.ndarray:
     mask = np.zeros((puzzle.height, puzzle.width), np.uint8)
+    for path in puzzle.details:
+        cv2.polylines(mask, [path.points.astype(np.int32)], path.closed, 255, 1)
     for a, b in puzzle.segments(filler=False):
         cv2.line(mask, (round(a.x), round(a.y)), (round(b.x), round(b.y)), 255, 1)
     return mask

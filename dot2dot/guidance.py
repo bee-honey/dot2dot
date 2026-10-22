@@ -47,7 +47,7 @@ def apply_plan(paths: list[Path], plan: Plan, image: np.ndarray) -> list[Path]:
     ]
 
     paths = [p for p in paths if not _ignored(p, ignore, must)]
-    paths = [replace(p, weight=max(p.weight, PART_WEIGHT)) if _share_in(p, must) >= INSIDE_SHARE else p for p in paths]
+    paths = [replace(p, weight=max(p.weight, PART_WEIGHT), protected=True) if _share_in(p, must) >= INSIDE_SHARE else p for p in paths]
 
     for box in must:
         if _line_amount(paths, box) < MIN_PART_LINES * _perimeter(box):
@@ -56,7 +56,7 @@ def apply_plan(paths: list[Path], plan: Plan, image: np.ndarray) -> list[Path]:
             for piece in sorted(found, key=lambda p: p.length(), reverse=True):
                 if budget <= 0:
                     break
-                paths.append(replace(piece, weight=PART_WEIGHT))
+                paths.append(replace(piece, weight=PART_WEIGHT, protected=True))
                 budget -= piece.length()
     return paths
 

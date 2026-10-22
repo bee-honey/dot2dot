@@ -127,7 +127,23 @@ def tune_mystery(judge: Judge, original: np.ndarray, build_at_level, levels=(2, 
         result = build_at_level(level)
         test = run_guess_test(judge, original, *judge_images(judge, result.puzzle), truth)
         candidates.append(Candidate(level, result, test))
-    recognizable = [c for c in candidates if c.test.after_correct]
+    # Broad recognition alone can accept a silhouette with missing eyes.
+    # Require mystery candidates to retain the faithful drawing's detail/parts.
+    from dot2dot.quality import evaluate
+
+    baseline = next((c for c in candidates if c.level == 0), None)
+    def fidelity(candidate):
+        result = candidate.result
+        q = evaluate(result.puzzle, result.reference, result.plan)
+        return dict(q.parts), q.detail_coverage
+
+    baseline_parts, baseline_detail = fidelity(baseline) if baseline else ({}, None)
+    def preserves_details(candidate):
+        parts, detail = fidelity(candidate)
+        return (all(parts.get(name, 0) >= value - 0.05 for name, value in baseline_parts.items())
+                and (baseline_detail is None or (detail is not None and detail >= baseline_detail - 0.05)))
+
+    recognizable = [c for c in candidates if c.test.after_correct and preserves_details(c)]
     pool = recognizable or [c for c in candidates if c.level == 0] or candidates
     best = max(pool, key=lambda c: c.test.mystery_score)
     return best, candidates

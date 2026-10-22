@@ -12,7 +12,7 @@ subject's shape. Mystery mode:
    picture emerges late in the drawing.
 
 Levels: 0 = off; 1 = fillers in the background; 2 = more fillers, also in
-empty areas inside the subject, and small give-away loops get fewer dots.
+empty areas inside the subject. Picture dots are preserved at every level.
 """
 
 import hashlib
@@ -22,12 +22,10 @@ import numpy as np
 
 from dot2dot.models import Path
 
-# Share of all dots that go to filler strokes, per level.
+# Extra filler budget relative to the picture dot budget, per level.
 FILLER_SHARE = {0: 0.0, 1: 0.35, 2: 0.5}
 # Fillers keep this many dot-spacings away from the picture's lines.
 CLEARANCE = 0.5
-# At level 2, feature loops (eyes) get this fraction of their usual dots.
-FEATURE_WEIGHT = 0.5
 # Filler stroke length, in dot spacings.
 MIN_LENGTH, MAX_LENGTH = 2, 6
 # How sharply fillers may bend (radians per pixel) and how quickly that changes.

@@ -31,6 +31,12 @@ def to_svg(puzzle: Puzzle, solution: bool = False) -> str:
         '<rect width="100%" height="100%" fill="white"/>',
     ]
 
+    for path in puzzle.details:
+        points = " ".join(f"{x:.1f},{y:.1f}" for x, y in path.points)
+        tag = "polygon" if path.closed else "polyline"
+        parts.append(f'<{tag} class="fine-detail" points="{points}" fill="none" stroke="#444" '
+                     f'stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round"/>')
+
     if solution:
         for filler, color in ((True, FILLER_COLOR), (False, LINE_COLOR)):
             for a, b in puzzle.segments(filler=filler):

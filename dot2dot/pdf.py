@@ -59,6 +59,17 @@ def _draw_page(canvas: Canvas, puzzle: Puzzle, title: str, solution: bool) -> No
     font = puzzle.font_size * scale
     radius = DOT_RADIUS * font
 
+    canvas.setStrokeColor(HexColor("#444444"))
+    canvas.setLineWidth(max(0.5, scale * 1.1))
+    for detail in puzzle.details:
+        path = canvas.beginPath()
+        path.moveTo(*to_page(*detail.points[0]))
+        for x, y in detail.points[1:]:
+            path.lineTo(*to_page(x, y))
+        if detail.closed:
+            path.close()
+        canvas.drawPath(path)
+
     if solution:
         canvas.setLineWidth(radius * 0.8)
         canvas.setLineCap(1)  # round

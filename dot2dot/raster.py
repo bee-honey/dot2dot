@@ -30,6 +30,10 @@ def render(puzzle: Puzzle, size: int = 1024, solution: bool = False, numbers: bo
     font = puzzle.font_size * scale
     radius = max(1, round(DOT_RADIUS * font))
 
+    for path in puzzle.details:
+        points = np.array([at(x, y) for x, y in path.points], dtype=np.int32)
+        cv2.polylines(canvas, [points], path.closed, (68, 68, 68), max(1, round(scale)), cv2.LINE_AA)
+
     if solution:
         line_width = max(1, round(radius * 0.8))
         for filler, color in ((True, FILLER_COLOR), (False, LINE_COLOR)):

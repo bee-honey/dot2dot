@@ -1,6 +1,6 @@
 """Data types passed between pipeline stages."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -25,6 +25,8 @@ class Path:
     # Filler: an extra background line added in mystery mode so the dots
     # spread evenly over the page and don't give the picture away.
     filler: bool = False
+    # Important interior detail: preserve independently of silhouette semantics.
+    protected: bool = False
 
     def length(self) -> float:
         steps = np.linalg.norm(np.diff(self.points, axis=0), axis=1).sum()
@@ -73,6 +75,8 @@ class Puzzle:
     strokes: list[Stroke]
     # Label font size in image pixels; renderers scale it with everything else.
     font_size: float
+    # Hybrid mode: fine detail printed on both puzzle and answer key.
+    details: list[Path] = field(default_factory=list)
 
     def segments(self, filler: bool | None = None) -> list[tuple[Dot, Dot]]:
         """Pairs of dots that should be connected in the solution.

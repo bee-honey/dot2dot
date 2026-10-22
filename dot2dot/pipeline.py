@@ -3,6 +3,7 @@
 from dataclasses import dataclass, replace
 from pathlib import Path as FilePath
 
+import cv2
 import numpy as np
 
 from dot2dot import lineart, mystery, photo, sketch
@@ -82,6 +83,8 @@ def build(
     style: str = "outline",
     plan: Plan | None = None,
     mystery_level: int = 0,
+    reference_override: list[Path] | None = None,
+    fine_details: bool = False,
 ) -> Result:
     """Like `generate`, but also returns the reference paths for quality checks.
 
@@ -99,10 +102,10 @@ def build(
     image = resize(image, WORKING_SIZE[style])
     height, width = image.shape[:2]
 
-    reference = extract_paths(image, style)
-    if plan is not None:
+    reference = extract_paths(image, style) if reference_override is None else reference_override
+    if plan is not None and reference_override is None:
         reference = apply_plan(reference, plan, image)
-    puzzle = assemble(reference, width, height, num_dots, max_paths, mystery_level, seed)
+    puzzle = assemble(reference, width, height, num_dots, max_paths, mystery_level, seed, fine_details)
     return Result(puzzle, reference, style, plan)
 
 
@@ -114,6 +117,7 @@ def assemble(
     max_paths: int | None = None,
     mystery_level: int = 0,
     seed: bytes = b"",
+    fine_details: bool = False,
 ) -> Puzzle:
     """Turn traced paths into a numbered puzzle: select, place dots, order, label.
 
@@ -122,22 +126,32 @@ def assemble(
     """
     if not reference:
         raise ValueError("No clear subject found in the image")
-    paths = select_paths(reference, num_dots, max_paths)
+    # Short ink strokes are often eyes, knuckles and boot seams. In hybrid
+    # mode print them rather than forcing tiny labels onto every fragment.
+    details = [p for p in reference if not p.essential and not p.protected
+               and 10 <= p.length() < 0.14 * max(width, height)] if fine_details else []
+    candidates = [p for p in reference if p not in details]
+    if not candidates:
+        candidates, details = reference, []
+    paths = select_paths(candidates, num_dots, max_paths)
     # Asking for more dots than the lines can legibly hold just piles up numbers.
     readable = max_readable_dots(paths, max(width, height))
     if num_dots > readable:
         num_dots = readable
-        paths = select_paths(reference, num_dots, max_paths)
-
-    if mystery_level:
-        if mystery_level >= 2:
-            spacing = sum(p.length() for p in paths) / num_dots
-            paths = [replace(p, weight=p.weight * mystery.FEATURE_WEIGHT) if mystery.is_feature(p, spacing) else p
-                     for p in paths]
-        paths = paths + mystery.add_fillers(paths, (height, width), num_dots, mystery_level, seed)
+        paths = select_paths(candidates, num_dots, max_paths)
 
     counts = allocate_dots(paths, num_dots, min_spacing=MIN_SPACING_FRACTION * max(width, height))
     simplified = [replace(p, points=simplify(p, n)) for p, n in zip(paths, counts)]
+    # Resolve picture junctions before fillers or reveal ordering can affect them.
+    simplified = declutter(order_paths(simplified), max(width, height))
+    if mystery_level:
+        fillers = mystery.add_fillers(paths, (height, width), num_dots, mystery_level, seed)
+        # Fillers are extra: never take dots away from the completed subject.
+        filler_budget = round(num_dots * mystery.FILLER_SHARE[mystery_level])
+        if fillers and filler_budget >= 2:
+            fillers = select_paths(fillers, filler_budget)
+            filler_counts = allocate_dots(fillers, filler_budget, min_spacing=MIN_SPACING_FRACTION * max(width, height))
+            simplified += [replace(p, points=simplify(p, n)) for p, n in zip(fillers, filler_counts)]
     if mystery_level:
         # Start in the page corner, and save small give-away loops (eyes) for last.
         spacing = sum(p.length() for p in paths) / num_dots
@@ -148,7 +162,10 @@ def assemble(
         ordered += order_paths(features, start_at=pen)
     else:
         ordered = order_paths(simplified)
-    ordered = declutter(ordered, max(width, height))
+
+    if fine_details:
+        # Also preserve unselected interior lines; never add excluded editor paths.
+        details += [p for p in candidates if not p.essential and p not in paths and p.length() >= 10]
 
     # Flatten the ordered paths into one numbered list of dots.
     points = np.concatenate([p.points for p in ordered])
@@ -164,10 +181,19 @@ def assemble(
     font_size = choose_font_size(points, width, height)
     draft = Puzzle(width, height, [Dot(n, x, y) for n, (x, y) in zip(numbers, points)], strokes, font_size)
     segments = np.array([[[a.x, a.y], [b.x, b.y]] for a, b in draft.segments()]).reshape(-1, 2, 2)
+    if details:
+        detail_segments = []
+        for detail in details:
+            label_path = cv2.approxPolyDP(detail.points.astype(np.float32), 1.0, detail.closed).reshape(-1, 2)
+            detail_segments.extend(zip(label_path[:-1], label_path[1:]))
+            if detail.closed:
+                detail_segments.append((detail.points[-1], detail.points[0]))
+        if detail_segments:
+            segments = np.concatenate([segments, np.asarray(detail_segments)])
     directions = place_labels(points, numbers, segments, np.concatenate(preferred), font_size, rings)
 
     dots = [
         Dot(n, float(x), float(y), float(dx), float(dy), bool(ring))
         for n, (x, y), (dx, dy), ring in zip(numbers, points, directions, rings)
     ]
-    return Puzzle(width, height, dots, strokes, font_size)
+    return Puzzle(width, height, dots, strokes, font_size, details)

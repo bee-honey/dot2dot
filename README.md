@@ -209,6 +209,23 @@ Quality 92/100 | outline 100% | detail 71% | accuracy 99% | crowded labels 12
 - **accuracy**: share of solution line length that sits on a real line (no shortcuts across empty space)
 - **crowded labels**: numbers overlapping another number or dot
 
+For detailed drawings, enable **Keep fine details drawn** in the web app or
+pass `--fine-details` on the CLI. Short interior strokes (eyes, fingers,
+armor seams) and unselected interior paths are printed on both sheets while
+larger paths remain numbered. This helps small features survive limited dot
+budgets, but makes the subject easier to guess before solving. It is off by
+default and can be combined with mystery mode. Quality coverage includes
+these printed lines.
+
+After generation, open **Inspect and correct traced lines** in the web app:
+
+- Compare the original image with extracted lines; hide the original to inspect extraction alone.
+- Click lines to include/exclude them or mark important details for preservation.
+- Trace missing details by clicking points, then finish an open line or closed shape.
+- Apply corrections to regenerate the numbered puzzle, answer key, and downloadable PDF.
+
+Important paths reserve dots before the remaining budget is shared. A very tight budget can be exceeded to retain their minimum geometry; explicit line limits can still exclude paths. Quality warnings identify low interior or planned-part coverage. Coverage is measured against extracted lines, so it does not prove that all source features were found. Use the source overlay to check missing eyes and other identity details. Corrections are kept in the current browser result, not saved as projects.
+
 In multi-line puzzles, a **ringed dot** marks the start of a new line: lift the pencil and continue from there. Detailed drawings need more dots (200–400) to stay recognizable.
 
 ---
@@ -237,10 +254,11 @@ In multi-line puzzles, a **ringed dot** marks the start of a new line: lift the 
 - [x] Importance weighting (`Path.weight`; used for faces in photo style)
 - [ ] Difficulty presets (Kids / Normal / Expert)
 - [x] Local web app: upload → preview puzzle → preview solution → download PDF (`dot2dot-web`)
+- [x] Trace correction: include/exclude paths, protect important lines, manually trace missing details
 
 ### Phase 3 — More styles
 - [x] Sketch extraction (pencil sketch + color edges, line-width weighting)
-- [ ] Hybrid style (pre-drawn features + dotted silhouette)
+- [x] Hybrid option: print fine interior details while larger paths remain numbered
 - [ ] Flow-line style
 - [ ] Stipple / micro-dot styles
 
@@ -280,8 +298,12 @@ it numbers small give-away features (eyes) last.
 |-------|--------------|
 | 0 | Off: faithful picture |
 | 1 | Filler lines in the background |
-| 2 | More fillers, also in empty areas inside the subject; eyes get fewer dots |
-| auto | Tries 2, 1 and 0, runs the AI guess test on each, keeps the most mysterious one that's still recognizable once solved |
+| 2 | More fillers, also in empty areas inside the subject; picture geometry stays intact |
+| auto | Tries 2, 1 and 0; keeps the most mysterious recognizable result that preserves detail and planned-part coverage relative to level 0 |
+
+The requested dot count is the **picture budget**. Mystery fillers add extra
+dots rather than taking them from the subject. Both fixed mystery levels keep
+the same picture segments as level 0; numbering and filler strokes change.
 
 **Guess test**: a judge sees the unsolved page, then the answer key, with
 no hints, and says what it sees. Three judge options are available; the trained judge instead predicts recognition of the subject using CLIP features:

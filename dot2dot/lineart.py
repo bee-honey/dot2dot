@@ -3,8 +3,8 @@
 Instead of tracing only the subject's border, this follows the drawing's own
 dark ink lines, including everything inside: eyes, emblems, muscle lines, seams.
 
-1. Ink mask: keep only near-black pixels. Colored fills and thin colored
-   detail lines (like Spider-Man's dark-red webbing) drop out. Page frames
+1. Ink mask: keep dark ink and neutral gray lines, including thin strokes.
+   Bright colored fills stay out. Page frames
    (long straight border lines on coloring pages) are erased.
 2. Subject: everything enclosed by the outermost ink, found with a
    paint-bucket fill from the image edges. Each sizeable part (body, feet)
@@ -63,13 +63,18 @@ MIN_INSIDE_SHARE = 0.6
 
 def ink_mask(image: np.ndarray, threshold: int = INK_THRESHOLD) -> np.ndarray:
     """White where the drawing has dark ink, black elsewhere."""
-    # HSV "value" is the brightest of the three color channels. Unlike plain
-    # grayscale, it keeps dark-but-saturated colors (deep red, navy) out of
-    # the ink mask; only truly dark pixels have all three channels low.
-    value = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)[:, :, 2]
-    mask = np.where(value < threshold, 255, 0).astype(np.uint8)
-    # "Opening" erases specks and hairlines thinner than the 3x3 kernel.
-    return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    # HSV value keeps bright colored fills out; saturation distinguishes
+    # gray drawing lines from similarly bright colors.
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    value = hsv[:, :, 2]
+    # Thin gray drawing lines need not contain a near-black center pixel.
+    # Keep neutral gray ink while leaving bright colored fills out.
+    mask = np.where((value < threshold) | ((hsv[:, :, 1] < 40) & (value < 180)), 255, 0).astype(np.uint8)
+    # Filter isolated specks by area, without eroding thin eyes and seams.
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    keep = np.zeros(count, dtype=bool)
+    keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= 3
+    return np.where(keep[labels], 255, 0).astype(np.uint8)
 
 
 def find_frame(marks: np.ndarray) -> np.ndarray:

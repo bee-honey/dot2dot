@@ -68,9 +68,12 @@ def allocate_dots(paths: list[Path], total: int, min_spacing: float | None = Non
         max(min_dots(p), int(p.length() / min_spacing) + (0 if p.closed else 1)) if min_spacing else total
         for p in paths
     ])
-    counts = np.zeros(len(paths), dtype=int)
+    # Reserve the minimum geometry for every selected path before sharing extras.
+    counts = np.array([max(min_dots(p), min(len(p.points), 6 if p.closed else 4))
+                       if p.protected else min_dots(p) for p in paths], dtype=int)
+    caps = np.maximum(caps, counts)
     open_ = np.ones(len(paths), dtype=bool)
-    remaining = total
+    remaining = max(0, total - int(counts.sum()))
     # Share out, cap, and re-share what the capped paths couldn't take.
     for _ in range(10):
         if remaining <= 0 or not open_.any():
@@ -100,10 +103,10 @@ def select_paths(paths: list[Path], total: int, max_paths: int | None = None) ->
     so a 100 px squiggle isn't worth including.
     """
     # Essential paths first, then the rest from longest to shortest.
-    paths = sorted(paths, key=lambda p: (p.essential, p.weighted_length()), reverse=True)
+    paths = sorted(paths, key=lambda p: (p.essential, p.protected, p.weighted_length()), reverse=True)
     if max_paths is not None:
         paths = paths[:max_paths]
-    while len(paths) > 1 and not paths[-1].essential:
+    while len(paths) > 1 and not (paths[-1].essential or paths[-1].protected):
         spacing = sum(p.weighted_length() for p in paths) / total
         if paths[-1].weighted_length() >= spacing * max(MIN_EARNED_DOTS, min_dots(paths[-1]) - 0.5):
             break
@@ -123,7 +126,7 @@ def declutter(paths: list[Path], image_size: int) -> list[Path]:
     result = []
     for path in paths:
         points = path.points
-        if len(claimed):
+        if len(claimed) and not path.protected:
             nearest = np.linalg.norm(points[:, None, :] - claimed[None, :, :], axis=2).min(axis=1)
             keep = nearest >= radius
             if keep.sum() >= min_dots(path):
