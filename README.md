@@ -215,7 +215,14 @@ armor seams) and unselected interior paths are printed on both sheets while
 larger paths remain numbered. This helps small features survive limited dot
 budgets, but makes the subject easier to guess before solving. It is off by
 default and can be combined with mystery mode. Quality coverage includes
-these printed lines.
+these printed lines. **Printed detail → Balanced** (the default) keeps
+closed shapes, protected features and long lines, while limiting dense short
+open strokes per local region. **All details** retains the earlier full-detail
+behavior (`--detail-density all` on the CLI). This is a geometry-based clutter
+filter, not semantic recognition of suit webbing. Small enclosed light shapes,
+such as white eyes in dark cartoon masks, are recovered before thick-ink
+processing can break their boundaries. Label placement also revisits earlier
+numbers after seeing the full set of labels.
 
 After generation, open **Inspect and correct traced lines** in the web app:
 
@@ -224,7 +231,37 @@ After generation, open **Inspect and correct traced lines** in the web app:
 - Trace missing details by clicking points, then finish an open line or closed shape.
 - Apply corrections to regenerate the numbered puzzle, answer key, and downloadable PDF.
 
-Important paths reserve dots before the remaining budget is shared. A very tight budget can be exceeded to retain their minimum geometry; explicit line limits can still exclude paths. Quality warnings identify low interior or planned-part coverage. Coverage is measured against extracted lines, so it does not prove that all source features were found. Use the source overlay to check missing eyes and other identity details. Corrections are kept in the current browser result, not saved as projects.
+The picture dot budget is a hard limit. Half is reserved by silhouette length before allocating interior details. Important paths receive priority, but lower-priority detail paths are omitted when their minimum geometry would exceed the budget; explicit line limits can also exclude paths. Quality warnings identify low interior or planned-part coverage. Coverage is measured against extracted lines, so it does not prove that all source features were found. Use the source overlay to check missing eyes and other identity details. Manual path edits apply to the current result. Region-feedback projects can be restored locally as described below.
+
+### Correcting a puzzle with feedback
+
+1. Generate a puzzle, then open **Mark a problem and regenerate**.
+2. Drag a box on the original image or answer key. Add a description such as
+   "Restore the separate fingers" or "Keep both eyes", then add the correction.
+3. Add more regions if needed and click **Regenerate with feedback**.
+4. Compare **Before / After** and the per-region checks, then **Keep revision**
+   or **Discard revision**. All accumulated corrections are reapplied before
+   the entire puzzle is reordered, renumbered, labeled, and exported.
+
+Local actions re-trace, protect, remove, or simplify the marked source region.
+Without AI, text selects an action by keywords; the explicit action menu is
+more precise. Optional **Use AI to interpret notes** sends marked image crops
+and notes to the configured OpenAI planner to identify relevant subparts.
+If interpretation fails, the selected local action is used and a notice appears.
+Corrections follow visible source geometry; they do not invent missing anatomy.
+
+Checks report geometric coverage or remaining lines and flag unresolved regions.
+They do not certify that the intended fingers, eyes, or identity are correct;
+review the result visually. Later overlapping regions take precedence.
+
+The original image, annotations, settings, and up to six kept versions are saved
+in this browser's IndexedDB on this device. **Restore last saved project**
+recovers the latest project after a refresh. Saved versions and **Undo last kept
+revision** restore both the puzzle and its accepted annotations. One project is
+stored at a time; saving another replaces the previous local project. Browser
+storage can be unavailable or cleared, and PDF links expire with the server's
+in-memory cache; regenerate to refresh a PDF download. No cloud project storage
+is used.
 
 In multi-line puzzles, a **ringed dot** marks the start of a new line: lift the pencil and continue from there. Detailed drawings need more dots (200–400) to stay recognizable.
 

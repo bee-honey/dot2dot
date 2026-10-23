@@ -70,34 +70,43 @@ def place_labels(
     half_height = DIGIT_HEIGHT * font_size / 2
     cap = 1.5 * font_size  # Beyond this much clearance, extra space doesn't matter.
 
-    placed_centers: list[np.ndarray] = []
-    placed_half_widths: list[float] = []
-    result = np.zeros_like(points)
-
-    for i, (point, number) in enumerate(zip(points, numbers)):
-        half_width = DIGIT_WIDTH * font_size * len(str(number)) / 2
-        half_size = np.array([half_width, half_height])
-
-        # Push each candidate box just far enough that its edge clears the dot.
-        reach = np.abs(directions) @ half_size  # box extent along each direction
+    half_widths = np.array([DIGIT_WIDTH * font_size * len(str(n)) / 2 for n in numbers])
+    candidate_centers = []
+    base_scores = []
+    # Compute fixed geometry once; later passes only reconsider label boxes.
+    for i, point in enumerate(points):
+        half_size = np.array([half_widths[i], half_height])
+        reach = np.abs(directions) @ half_size
         centers = point + directions * (radii[i] + GAP * font_size + reach)[:, None]
-
+        candidate_centers.append(centers)
         clearance = np.full(CANDIDATE_COUNT, cap)
+        collisions = np.zeros(CANDIDATE_COUNT)
         others = np.delete(points, i, axis=0)
         if len(others):
             gaps = _box_to_points(centers, half_size, others) - np.delete(radii, i)
             clearance = np.minimum(clearance, gaps.min(axis=1))
+            collisions = (gaps < 0).sum(axis=1)
         if len(segments):
             clearance = np.minimum(clearance, _box_to_segments(centers, half_size, segments).min(axis=1))
-        if placed_centers:
-            gaps = _box_to_boxes(centers, half_size, np.array(placed_centers), np.array(placed_half_widths), half_height)
-            clearance = np.minimum(clearance, gaps.min(axis=1))
+        base_scores.append(clearance + 0.25 * font_size * (directions @ preferred[i])
+                           - 4 * font_size * collisions)
 
-        score = clearance + 0.25 * font_size * (directions @ preferred[i])
-        best = int(np.argmax(score))
-        result[i] = directions[best]
-        placed_centers.append(centers[best])
-        placed_half_widths.append(half_width)
+    chosen = np.zeros(len(points), dtype=int)
+    placed = np.zeros((len(points), 2))
+    for sweep in range(3):
+        # First pass is greedy; subsequent passes see all labels, including later numbers.
+        for i in range(len(points)):
+            indexes = np.arange(i) if sweep == 0 else np.delete(np.arange(len(points)), i)
+            scores = base_scores[i].copy()
+            if len(indexes):
+                gaps = _box_to_boxes(candidate_centers[i], np.array([half_widths[i], half_height]),
+                                     placed[indexes], half_widths[indexes], half_height)
+                scores -= 4 * font_size * (gaps < 0).sum(axis=1)
+                scores += np.minimum(gaps.min(axis=1), cap) * 0.25
+            chosen[i] = int(np.argmax(scores))
+            placed[i] = candidate_centers[i][chosen[i]]
+    result = directions[chosen]
+
     return result
 
 

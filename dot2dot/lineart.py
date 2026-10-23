@@ -308,10 +308,47 @@ def find_subject(image: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
     return ink, subject_region(image, ink, ignore=frame)
 
 
+def light_features(image: np.ndarray, subject: np.ndarray) -> list[Path]:
+    """Recover small enclosed light shapes before thick-ink opening destroys them.
+
+    This is a color/geometry heuristic, not face recognition. Require a dark
+    boundary and reject large gaps/background regions inside the silhouette.
+    """
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    inside = cv2.erode(subject, np.ones((5, 5), np.uint8)) > 0
+    mask = np.where((hsv[:, :, 1] < 60) & (hsv[:, :, 2] > 160) & inside, 255, 0).astype(np.uint8)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    area = mask.size
+    dark = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) < 100
+    dark_depth = cv2.distanceTransform(dark.astype(np.uint8), cv2.DIST_L2, 5)
+    result = []
+    for contour in contours:
+        if not 0.0004 * area <= cv2.contourArea(contour) <= 0.006 * area:
+            continue
+        region = np.zeros_like(mask)
+        cv2.drawContours(region, [contour], -1, 255, cv2.FILLED)
+        boundary = (cv2.dilate(region, np.ones((13, 13), np.uint8)) > 0) & (region == 0)
+        # A thin outline around white armor is not a filled dark eye mask.
+        # Require a substantial thick dark surround, not just dark adjacency.
+        if (boundary.any() and dark[boundary].mean() >= 0.45
+                and (dark_depth[boundary] >= 3).mean() >= 0.2):
+            result.append(Path(contour.reshape(-1, 2).astype(float), True,
+                               weight=2.5, protected=True, feature=True))
+    return result
+
+
 def extract_paths(image: np.ndarray) -> list[Path]:
     """Silhouette loop(s) + centerlines of interior ink lines + borders of fills."""
     ink, subject = find_subject(image)
     if subject is None:
         return trace_ink(ink)
     # The subject mask was cut off half an edge margin in from the border.
-    return assemble(subject, trace_ink(ink), _edge_margin(ink.shape) // 2 + 3)
+    paths = assemble(subject, trace_ink(ink), _edge_margin(ink.shape) // 2 + 3)
+    features = light_features(image, subject)
+    if features:
+        # Replace overlapping fragments with the recovered continuous feature.
+        band = np.zeros(subject.shape, np.uint8)
+        for feature in features:
+            cv2.polylines(band, [feature.points.astype(np.int32)], True, 255, 5)
+        paths = [p for p in paths if p.essential] + clip_paths([p for p in paths if not p.essential], band)
+    return paths + features

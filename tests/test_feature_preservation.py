@@ -138,3 +138,119 @@ def test_ironman_small_parts_are_preserved_when_sample_available():
     for x0,y0,x1,y1 in [(350,130,510,320),(0,735,130,945),(375,920,490,998),(740,880,946,980)]:
         assert any(((p.points[:,0]>=x0)&(p.points[:,0]<=x1)&(p.points[:,1]>=y0)&(p.points[:,1]<=y1)).mean()>.5
                    for p in result.puzzle.details)
+
+
+def test_recovers_two_enclosed_light_features_without_background_gap():
+    from dot2dot.lineart import light_features
+    image = np.full((600, 600, 3), 240, np.uint8)
+    subject = np.zeros((600, 600), np.uint8)
+    cv2.circle(subject, (300, 300), 240, 255, -1)
+    image[subject > 0] = (15, 15, 15)
+    for x in (220, 380):
+        cv2.ellipse(image, (x, 230), (20, 14), 0, 0, 360, (235, 235, 235), -1)
+    # Large neutral gap should not be mistaken for a small identity feature.
+    cv2.rectangle(image, (210, 350), (390, 460), (235, 235, 235), -1)
+    features = light_features(image, subject)
+    assert len(features) == 2
+    assert all(p.closed and p.feature and p.protected for p in features)
+
+
+def test_balanced_details_preserve_features_and_reduce_dense_texture():
+    from dot2dot.pipeline import balance_details
+    texture = [Path(np.array([[30., y], [60, y]]), False) for y in range(10, 20)]
+    eye = Path(np.array([[10., 10], [20, 10], [15, 20]]), True, feature=True)
+    protected = Path(np.array([[35., 11], [55, 11]]), False, protected=True)
+    kept = balance_details(texture + [eye, protected], 1000)
+    assert eye in kept and protected in kept
+    assert sum(p in kept for p in texture) == 2
+    assert kept == balance_details(texture + [eye, protected], 1000)
+
+
+def test_declutter_preserves_silhouette_geometry_and_open_endpoints():
+    from dot2dot.simplify import declutter
+    first = Path(np.array([[10., 10], [20, 10], [10, 20]]), True)
+    silhouette = Path(np.array([[11., 11], [400, 11], [400, 400], [11, 400]]), True, essential=True)
+    line = Path(np.array([[11., 11], [40, 80], [100, 100]]), False)
+    result = declutter([first, silhouette, line], 1000)
+    assert np.array_equal(result[1].points, silhouette.points)
+    assert np.array_equal(result[2].points[[0,-1]], line.points[[0,-1]])
+
+
+def test_spiderman_eyes_and_labels_when_sample_available():
+    from pathlib import Path as FilePath
+    import pytest
+    from dot2dot.quality import count_crowded_labels
+    sample = FilePath('samples/private/Spiderman.png')
+    if not sample.exists():
+        pytest.skip('Private reference image is not committed')
+    result = build(sample, 300, None, 'lineart', fine_details=True)
+    eyes = [p for p in result.reference if p.feature]
+    assert len(eyes) == 2
+    assert all(p in result.puzzle.details for p in eyes)
+    assert count_crowded_labels(result.puzzle) <= 5
+
+
+def test_editor_preserves_feature_metadata_and_validates_density(square_image):
+    from dot2dot.web.app import parse_edit_paths
+    parsed = parse_edit_paths(json.dumps([dict(points=[[10,10],[20,10],[15,20]],
+                                              closed=True,feature=True)]), 100,100)
+    assert parsed[0].feature
+    client = TestClient(app)
+    with open(square_image,'rb') as f:
+        response = client.post('/api/puzzles',files={'image':('square.png',f)},
+                               data={'detail_density':'invalid'})
+    assert response.status_code == 400
+
+
+def test_thin_white_armor_compartments_are_not_protected_eye_features():
+    from dot2dot.lineart import light_features
+    image = np.full((600,600,3),255,np.uint8)
+    subject = np.zeros((600,600),np.uint8)
+    subject[20:580,20:580] = 255
+    # Many small white compartments bounded by thin black linework.
+    for x in range(50,550,60):
+        for y in range(50,550,60):
+            cv2.rectangle(image,(x,y),(x+32,y+32),(0,0,0),2)
+    assert light_features(image,subject) == []
+
+
+def test_protection_cannot_exceed_budget_or_starve_the_silhouette():
+    from dot2dot.simplify import allocate_dots
+    angles=np.linspace(0,2*np.pi,600,endpoint=False)
+    outline=Path(np.column_stack([500+400*np.cos(angles),500+400*np.sin(angles)]),True,essential=True)
+    details=[]
+    for i in range(100):
+        x,y=(i%10)*40+200,(i//10)*40+200
+        points=np.column_stack([x+10*np.cos(angles[:60]*10),y+10*np.sin(angles[:60]*10)])
+        details.append(Path(points,True,protected=True))
+    selected=select_paths([outline]+details,310)
+    counts=allocate_dots(selected,310)
+    assert sum(counts) <= 310
+    assert counts[selected.index(outline)] >= 155
+    assert len(selected) < 101
+    with __import__('pytest').raises(ValueError,match='budget'):
+        allocate_dots([outline]+details,310)
+
+
+def test_declutter_never_shortcuts_a_crowded_corner():
+    from dot2dot.simplify import declutter
+    previous=Path(np.array([[99.,101],[102,101],[102,104]]),True)
+    bent=Path(np.array([[100.,20],[100,100],[200,100]]),False)
+    result=declutter([previous,bent],1000)
+    assert np.array_equal(result[1].points,bent.points)
+
+
+def test_ironman_dots_only_budget_and_pose_when_sample_available():
+    from pathlib import Path as FilePath
+    from dot2dot.quality import evaluate
+    import pytest
+    sample=FilePath('samples/private/ironman.gif')
+    if not sample.exists():
+        pytest.skip('Private reference image is not committed')
+    result=build(sample,310,None,'auto',fine_details=False)
+    quality=evaluate(result.puzzle,result.reference)
+    assert len(result.puzzle.dots) <= 310
+    assert sum(p.feature for p in result.reference) == 0
+    assert quality.outline_coverage >= .95
+    assert quality.accuracy >= .95
+    assert quality.crowded_labels <= 10

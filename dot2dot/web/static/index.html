@@ -20,12 +20,14 @@
   }
   * { box-sizing: border-box; }
   body {
+    height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     background: var(--bg);
     color: var(--ink);
   }
   header {
+    flex-shrink: 0;
     padding: 18px 28px;
     display: flex;
     align-items: baseline;
@@ -39,14 +41,19 @@
 
   main {
     display: grid;
-    grid-template-columns: 320px 1fr;
+    grid-template-columns: 320px minmax(0, 1fr);
+    flex: 1; min-height: 0; width: 100%;
     gap: 24px;
     padding: 24px 28px;
     max-width: 1600px;
     margin: 0 auto;
   }
+  .settings-pane { min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  .results-pane { min-height: 0; min-width: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding-right: 4px; }
   @media (max-width: 900px) {
-    main { grid-template-columns: 1fr; padding: 16px; }
+    body { height: auto; min-height: 100dvh; overflow: auto; }
+    main { flex: none; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(280px, 55dvh) minmax(350px, 80dvh); padding: 16px; }
+    header { flex-wrap: wrap; gap: 6px; padding: 14px 16px; }
   }
 
   .card {
@@ -57,7 +64,31 @@
   }
 
   /* Settings */
-  form { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 24px; }
+  #form { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; padding: 0; }
+  .settings-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .settings-scroll > * { flex-shrink: 0; }
+  .generation-actions { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-top: 1px solid var(--line); background: var(--card); }
+  .generation-actions #status { max-height: 76px; overflow-y: auto; overflow-wrap: anywhere; }
+  .setting-group { position: relative; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+  .setting summary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 46px; padding: 11px 42px 11px 12px; cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; }
+  .setting summary::-webkit-details-marker { display: none; }
+  .setting summary::before { content: "›"; font-size: 19px; line-height: 1; color: var(--muted); }
+  .setting[open] summary::before { transform: rotate(90deg); }
+  .setting[open] summary { border-bottom: 1px solid var(--line); }
+  .setting-value { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 400; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .setting-content { padding: 12px; }
+  .setting-content > * + * { margin-top: 10px; }
+  .setting-content textarea, .setting-content select { width: 100%; min-width: 0; }
+  .setting-content .field { display: flex; flex-direction: column; gap: 6px; }
+  .info-button { position: absolute; right: 10px; top: 12px; width: 23px; height: 23px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--muted); font: 600 13px Georgia, serif; cursor: pointer; }
+  .info-button:hover { color: var(--accent); border-color: var(--accent); }
+  button:focus-visible, summary:focus-visible, .settings-scroll:focus-visible, .results-pane:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #settings-help { max-width: min(440px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 14px; padding: 20px; color: var(--ink); box-shadow: 0 16px 60px #0002; }
+  #settings-help::backdrop { background: #0004; }
+  .help-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .help-heading h2 { font-size: 18px; margin: 0; }
+  #settings-help p { font-size: 14px; line-height: 1.6; margin-bottom: 0; }
+  #close-settings-help { border: 0; background: var(--bg); border-radius: 50%; width: 28px; height: 28px; font-size: 20px; cursor: pointer; }
   label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; }
   .hint { font-weight: 400; color: var(--muted); font-size: 12px; line-height: 1.4; }
   select, input[type=text], input[type=number] {
@@ -78,7 +109,7 @@
     overflow: hidden; position: relative;
   }
   #drop:hover, #drop.over { border-color: var(--accent); background: #fdf3f2; }
-  #drop img { max-width: 100%; max-height: 240px; display: block; }
+  #drop img { max-width: 100%; max-height: 190px; display: block; }
   #drop .change { position: absolute; bottom: 6px; right: 8px; font-size: 11px; background: #fffd; padding: 2px 6px; border-radius: 6px; }
   #file { display: none; }
 
@@ -111,9 +142,11 @@
   }
   .actions a.pdf { background: var(--ink); color: #fff; border-color: var(--ink); }
 
+  #revision-review svg { width: 100%; height: auto; display: block; }
+  #feedback-note { width: 100%; box-sizing: border-box; }
   .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
   @media (max-width: 1200px) { .panels { grid-template-columns: 1fr; } }
-  .panel { padding: 0; overflow: hidden; }
+  .panel { min-width: 0; padding: 0; overflow: hidden; }
   .panel-head {
     display: flex; justify-content: space-between; align-items: center;
     padding: 10px 14px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 14px;
@@ -122,8 +155,8 @@
   .panel-body { background: #fff; padding: 8px; }
   .panel-body svg, .panel-body img { width: 100%; height: auto; display: block; }
 
-  .ai-box { border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: none; flex-direction: column; gap: 8px; background: #fbfaf7; }
-  .ai-box.available { display: flex; }
+  .ai-box { display: none; }
+  .ai-box.available { display: block; }
   .ai-toggle { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
   .ai-toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
   textarea { font: inherit; font-size: 13px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; resize: vertical; min-height: 54px; }
@@ -163,14 +196,18 @@
 </header>
 
 <main>
-  <section>
+  <section class="settings-pane" aria-label="Puzzle generation">
+    <button type="button" id="restore-project" style="display:none">Restore last saved project</button>
     <form id="form" class="card">
-      <div id="drop" tabindex="0">
+      <div class="settings-scroll" id="settings-scroll" tabindex="0" aria-label="Generation settings">
+<div id="drop" tabindex="0">
         <div id="drop-text"><strong>Drop an image here</strong><br>or click to choose a file</div>
       </div>
       <input id="file" type="file" accept="image/*,.heic,.heif">
-
-      <label class="field">Style
+        <div class="setting-group">
+          <details class="setting" id="setting-style">
+            <summary>Style<span class="setting-value" id="setting-style-value">Auto</span></summary>
+            <div class="setting-content"><label class="field">Style
         <select id="style">
           <option value="auto">Auto (recommended)</option>
           <option value="sketch">Sketch: pencil-sketch any picture, then trace it (new)</option>
@@ -179,17 +216,27 @@
           <option value="outline">Outline: just the border</option>
         </select>
         <span class="hint" id="style-hint"></span>
-      </label>
-
-      <label class="field">Dots
+      </label></div>
+          </details>
+          <button type="button" class="info-button" data-help="style" aria-label="About style" aria-haspopup="dialog">i</button>
+        </div>
+        <div class="setting-group">
+          <details class="setting" id="setting-dots">
+            <summary>Dot count<span class="setting-value" id="setting-dots-value">200</span></summary>
+            <div class="setting-content"><label class="field">Dots
         <div class="slider-row">
           <input id="dots-range" type="range" min="20" max="600" step="10" value="200">
           <input id="dots" type="number" min="10" max="1000" value="200">
         </div>
         <span class="hint">Kids ≈ 30–60 · Normal ≈ 80–150 · Expert ≈ 200–400</span>
-      </label>
-
-      <label class="field">Mystery
+      </label></div>
+          </details>
+          <button type="button" class="info-button" data-help="dots" aria-label="About dot count" aria-haspopup="dialog">i</button>
+        </div>
+        <div class="setting-group">
+          <details class="setting" id="setting-mystery">
+            <summary>Mystery<span class="setting-value" id="setting-mystery-value">Off</span></summary>
+            <div class="setting-content"><label class="field">Mystery
         <select id="mystery">
           <option value="0">Off: faithful picture</option>
           <option value="1">Some: hide the shape with background lines</option>
@@ -197,29 +244,55 @@
           <option value="auto" disabled>Auto: tries levels, a judge keeps the best</option>
         </select>
         <span class="hint">Adds light background lines so the dots don't give the picture away. Kids find out what it is by connecting them.</span>
-      </label>
-
-      <label class="field">Max separate lines <span class="hint">(optional)</span>
-        <input id="max-lines" type="number" min="1" placeholder="no limit">
-      </label>
-
-<div class="field">
-          <label><input type="checkbox" id="fine-details"> Keep fine details drawn</label>
-          <p class="hint">Print small eyes, fingers and armor seams instead of dropping them. Easier to recognize before solving; optional for mystery puzzles.</p>
+      </label></div>
+          </details>
+          <button type="button" class="info-button" data-help="mystery" aria-label="About mystery" aria-haspopup="dialog">i</button>
         </div>
-
-      <label class="field">Title
+        <div class="setting-group">
+          <details class="setting" id="setting-lines">
+            <summary>Separate lines<span class="setting-value" id="setting-lines-value">No limit</span></summary>
+            <div class="setting-content"><label class="field">Max separate lines <span class="hint">(optional)</span>
+        <input id="max-lines" type="number" min="1" placeholder="no limit">
+      </label></div>
+          </details>
+          <button type="button" class="info-button" data-help="lines" aria-label="About separate lines" aria-haspopup="dialog">i</button>
+        </div>
+        <div class="setting-group">
+          <details class="setting" id="setting-detail">
+            <summary>Fine details<span class="setting-value" id="setting-detail-value">Off</span></summary>
+            <div class="setting-content"><div class="field">
+          <label><input type="checkbox" id="fine-details"> Keep fine details drawn</label>
+          <label>Printed detail <select id="detail-density">
+            <option value="balanced">Balanced: reduce dense short strokes</option>
+            <option value="all">All details: preserve every extracted line</option>
+          </select></label>
+          <p class="hint">Print small eyes, fingers and armor seams instead of dropping them. Easier to recognize before solving; optional for mystery puzzles.</p>
+        </div></div>
+          </details>
+          <button type="button" class="info-button" data-help="detail" aria-label="About fine details" aria-haspopup="dialog">i</button>
+        </div>
+        <div class="setting-group">
+          <details class="setting" id="setting-title">
+            <summary>Worksheet title<span class="setting-value" id="setting-title-value">Connect the Dots</span></summary>
+            <div class="setting-content"><label class="field">Title
         <input id="title" type="text" value="Connect the Dots">
-      </label>
-
-      <div class="ai-box" id="ai-box">
-        <label class="ai-toggle"><input id="ai" type="checkbox"> Use AI planner</label>
+      </label></div>
+          </details>
+          <button type="button" class="info-button" data-help="title" aria-label="About worksheet title" aria-haspopup="dialog">i</button>
+        </div>
+        <div id="ai-box" class="setting-group ai-box">
+          <details class="setting" id="setting-ai">
+            <summary>AI planner<span class="setting-value" id="setting-ai-value">Off</span></summary>
+            <div class="setting-content"><label class="ai-toggle"><input id="ai" type="checkbox"> Use AI planner</label>
         <span class="hint" id="ai-hint">An AI model looks at the picture first: what must appear (eyes, beak, feet…) and what to ignore (captions, logos). Adds a few seconds.</span>
-        <textarea id="request" placeholder="Optional instructions, e.g. &quot;easy puzzle for a 5-year-old&quot;"></textarea>
-      </div>
-
-      <div class="ai-box" id="judge-box">
-        <label class="ai-toggle"><input id="guess-test" type="checkbox"> Run guess test</label>
+        <textarea id="request" placeholder="Optional instructions, e.g. &quot;easy puzzle for a 5-year-old&quot;"></textarea></div>
+          </details>
+          <button type="button" class="info-button" data-help="ai" aria-label="About ai planner" aria-haspopup="dialog">i</button>
+        </div>
+        <div id="judge-box" class="setting-group ai-box">
+          <details class="setting" id="setting-judge">
+            <summary>Recognition check<span class="setting-value" id="setting-judge-value">Off</span></summary>
+            <div class="setting-content"><label class="ai-toggle"><input id="guess-test" type="checkbox"> Run guess test</label>
         <span class="hint">A judge looks at the unsolved page, then the answer key, and says what it sees in each. A good mystery puzzle fools it before solving. Also used by Mystery: Auto.</span>
         <label class="field">Judge
           <select id="judge">
@@ -227,15 +300,19 @@
             <option value="clip">Local CLIP: free, instant</option>
             <option value="openai" disabled>OpenAI: more accurate, ~3 s per test</option>
           </select>
-        </label>
+        </label></div>
+          </details>
+          <button type="button" class="info-button" data-help="judge" aria-label="About recognition check" aria-haspopup="dialog">i</button>
+        </div>
       </div>
-
-      <button id="go" class="primary" type="submit" disabled>Generate puzzle</button>
-      <div id="status"></div>
+      <div class="generation-actions">
+        <button id="go" class="primary" type="submit" disabled>Generate puzzle</button>
+        <div id="status" role="status" aria-live="polite"></div>
+      </div>
     </form>
   </section>
 
-  <section>
+  <section class="results-pane" id="results-scroll" tabindex="0" aria-label="Puzzle previews and feedback">
     <div id="empty" class="card">
       <div class="big">• • •</div>
       Upload an image and press <b>Generate</b>.<br>
@@ -295,6 +372,43 @@
         </div>
       </div>
 
+      <details class="card check" id="feedback-card" open>
+        <summary>Mark a problem and regenerate</summary>
+        <p>Drag a box around a problem on the source or answer key, describe the correction, and add it.
+          All marked regions are reapplied when the whole puzzle is rebuilt and renumbered.</p>
+        <label>Mark on <select id="feedback-view"><option value="source">Original image</option><option value="answer">Answer key</option></select></label>
+        <svg id="feedback-canvas" aria-label="Mark correction regions" style="display:block;width:100%;max-height:700px;background:white;touch-action:none;cursor:crosshair"></svg>
+        <label class="field">What should change?
+          <textarea id="feedback-note" maxlength="1000" placeholder="For example: These fingers merged. Restore the separate finger contours."></textarea>
+        </label>
+        <label>Correction <select id="feedback-action">
+          <option value="auto">Choose from my description</option><option value="restore">Re-trace missing or wrong detail</option>
+          <option value="protect">Keep this feature</option><option value="remove">Remove lines here</option>
+          <option value="simplify">Reduce detail here</option>
+        </select></label>
+        <p class="hint">Without AI, descriptions choose a local action using keywords; use the menu to be explicit. Re-tracing follows the source, rather than inventing a new pose.</p>
+        <label id="feedback-ai-label" style="display:none"><input type="checkbox" id="feedback-ai"> Use AI to interpret notes and identify parts (sends marked image crops to OpenAI)</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
+          <button type="button" id="add-feedback">Add marked correction</button>
+          <button type="button" id="clear-feedback-box">Clear box</button>
+          <button type="button" id="regenerate-feedback">Regenerate with feedback</button>
+        </div>
+        <ol id="feedback-list"></ol>
+        <div id="feedback-checks" role="status"></div>
+        <p id="feedback-save-status" class="hint"></p>
+        <div id="revision-review" style="display:none">
+          <h3>Review revision</h3>
+          <div class="panels"><div><b>Before</b><div id="revision-before"></div></div><div><b>After</b><div id="revision-after"></div></div></div>
+          <button type="button" id="keep-revision">Keep revision</button>
+          <button type="button" id="discard-revision">Discard revision</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
+          <label>Saved versions <select id="version-list"></select></label>
+          <button type="button" id="restore-version">Restore version</button>
+          <button type="button" id="undo-revision">Undo last kept revision</button>
+        </div>
+      </details>
+
       <details class="card check" id="editor-card">
         <summary>Inspect and correct traced lines</summary>
         <p id="detail-warning" role="status"></p>
@@ -344,12 +458,51 @@
   </section>
 </main>
 
+<dialog id="settings-help" aria-labelledby="settings-help-title">
+  <div class="help-heading"><h2 id="settings-help-title"></h2><button type="button" id="close-settings-help" aria-label="Close setting explanation">×</button></div>
+  <p id="settings-help-text"></p>
+</dialog>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const drop = $("drop"), fileInput = $("file"), go = $("go"), status = $("status");
 let chosenFile = null;
 let lastResult = null;
 let editPaths = [], draftPoints = [], pendingEdits = null;
+let feedbackRegions = [], feedbackBox = null, regionStart = null;
+let versions = [], versionIndex = -1, reviewBase = null, revisionRequest = false;
+let projectGeneration = 0, saveChain = Promise.resolve();
+
+const SETTING_HELP = {
+  style: ["Style", "Auto chooses a tracing method for your image. Line art suits cartoons and coloring pages; Photo removes a busy background; Sketch extracts pencil and color edges; Outline keeps the outer border."],
+  dots: ["Dot count", "Choose the number of picture dots. More dots can preserve curves and details, but increase difficulty and label crowding. The picture stays within this limit; mystery filler dots are additional."],
+  mystery: ["Mystery", "Adds numbered background strokes to make the picture harder to guess before solving. The subject's picture dots stay intact. Auto compares levels using the selected recognition judge."],
+  lines: ["Separate lines", "Limit how many strokes need a pencil lift. Leave this blank to let the app retain more features. A low limit can omit eyes, fingers, or other interior details."],
+  detail: ["Fine details", "Keep small features as printed lines on both the puzzle and answer key instead of dropping them. Balanced reduces dense short strokes; All details retains the full extracted detail. Printed clues make the subject easier to recognize."],
+  title: ["Worksheet title", "Set the heading printed on the PDF puzzle and answer key. This changes the worksheet title, not how the image is traced."],
+  ai: ["AI planner", "An optional OpenAI vision model identifies important parts and regions to ignore. Your image and instructions are sent to OpenAI. It can guide tracing but does not guarantee every feature will be correct."],
+  judge: ["Recognition check", "Checks whether the subject can be guessed before and after solving. Local CLIP and the trained judge run on your machine; the OpenAI judge sends images to OpenAI. The selected judge is also used by Mystery Auto."]
+};
+document.querySelectorAll("[data-help]").forEach(button => button.addEventListener("click", () => {
+  const [title, text] = SETTING_HELP[button.dataset.help];
+  $("settings-help-title").textContent = title; $("settings-help-text").textContent = text;
+  $("settings-help").showModal();
+}));
+$("close-settings-help").onclick = () => $("settings-help").close();
+function updateSettingSummaries() {
+  const styleNames = {auto:"Auto",lineart:"Line art",photo:"Photo",sketch:"Sketch",outline:"Outline"};
+  const values = {
+    style: styleNames[$("style").value], dots: $("dots").value,
+    mystery: {"0":"Off","1":"Some","2":"Lots",auto:"Auto"}[$("mystery").value],
+    lines: $("max-lines").value || "No limit",
+    detail: $("fine-details").checked ? ($("detail-density").value === "all" ? "All details" : "Balanced") : "Off",
+    title: $("title").value || "Default", ai: $("ai").checked ? "On" : "Off",
+    judge: $("guess-test").checked ? "On" : "Off"
+  };
+  for (const [key,value] of Object.entries(values)) $("setting-"+key+"-value").textContent = value;
+}
+$("form").addEventListener("input", updateSettingSummaries);
+$("form").addEventListener("change", updateSettingSummaries);
 
 const STYLE_HINTS = {
   auto: "Picks for you: Line art for drawings on a plain background, Photo for everything else.",
@@ -358,7 +511,7 @@ const STYLE_HINTS = {
   photo: "Removes the background, then sketches the subject's features. Faces get extra detail. Takes a few seconds; try 100–200 dots.",
   outline: "Traces only the subject's border. Best for a clear subject on a plain background.",
 };
-const updateHint = () => { $("style-hint").textContent = STYLE_HINTS[$("style").value]; };
+const updateHint = () => { $("style-hint").textContent = STYLE_HINTS[$("style").value]; updateSettingSummaries(); };
 $("style").addEventListener("change", updateHint);
 updateHint();
 
@@ -374,14 +527,16 @@ fetch("/api/config").then((r) => r.json()).then((cfg) => {
     $("judge").value = "trained";
   }
   if (!cfg.clip_available && cfg.ai_available) $("judge").value = "openai";
+  $("feedback-ai-label").style.display = cfg.ai_available ? "block" : "none";
+  updateSettingSummaries();
   if (!cfg.ai_available) return;
   $("ai-box").classList.add("available");
   $("ai-hint").textContent += ` Model: ${cfg.ai_model}.`;
 }).catch(() => {});
 
 // Keep the slider and number box in sync.
-$("dots-range").addEventListener("input", (e) => { $("dots").value = e.target.value; });
-$("dots").addEventListener("input", (e) => { $("dots-range").value = e.target.value; });
+$("dots-range").addEventListener("input", (e) => { $("dots").value = e.target.value; updateSettingSummaries(); });
+$("dots").addEventListener("input", (e) => { $("dots-range").value = e.target.value; updateSettingSummaries(); });
 
 // File selection: click or drag & drop.
 drop.addEventListener("click", () => fileInput.click());
@@ -394,7 +549,11 @@ drop.addEventListener("drop", (e) => { const f = e.dataTransfer.files[0]; if (f)
 function chooseFile(file) {
   const isHeic = /\.(heic|heif)$/i.test(file.name);
   if (!file.type.startsWith("image/") && !isHeic) { setStatus("Please choose an image file.", true); return; }
+  if (go.disabled && chosenFile) return;
   chosenFile = file;
+  projectGeneration++;
+  feedbackRegions = []; feedbackBox = null; versions = []; versionIndex = -1; reviewBase = null;
+  $("revision-review").style.display = "none";
   pendingEdits = null;
   lastResult = null;
   $("results").style.display = "none";
@@ -408,16 +567,26 @@ function chooseFile(file) {
 
 function setStatus(message, isError = false, busy = false) {
   status.className = isError ? "error" : "";
-  status.innerHTML = (busy ? '<span class="spinner"></span>' : "") + message;
+  status.replaceChildren();
+  if (busy) { const spinner = document.createElement("span"); spinner.className = "spinner"; status.appendChild(spinner); }
+  status.appendChild(document.createTextNode(message));
 }
 
 $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!chosenFile) return;
+  if (reviewBase) { setStatus("Keep or discard the current revision before generating another.", true); return; }
+  const isRevision = revisionRequest || (feedbackRegions.length > 0 && versionIndex >= 0);
+  revisionRequest = false;
+  const previousVersion = versions[versionIndex] || null;
+  const requestSettings = captureSettings();
 
   const body = new FormData();
   body.append("image", chosenFile);
+  body.append("feedback", JSON.stringify(feedbackRegions));
+  body.append("feedback_ai", $("feedback-ai").checked ? "true" : "false");
   body.append("fine_details", $("fine-details").checked ? "true" : "false");
+  body.append("detail_density", $("detail-density").value);
   if (pendingEdits) body.append("edited_paths", JSON.stringify(pendingEdits));
   pendingEdits = null;
   body.append("dots", $("dots").value);
@@ -444,6 +613,17 @@ $("form").addEventListener("submit", async (e) => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || response.statusText);
     showResult(data);
+    if (isRevision && previousVersion) {
+      reviewBase = previousVersion;
+      $("revision-before").innerHTML = previousVersion.result.solution_svg;
+      $("revision-after").innerHTML = data.solution_svg;
+      $("revision-review").style.display = "block";
+      reviewBase.candidateSettings = requestSettings;
+    } else {
+      appendVersion(data, requestSettings);
+    }
+    drawFeedback();
+    saveProject();
     const seconds = ((performance.now() - started) / 1000).toFixed(1);
     const requested = Number(body.get("dots"));
     const note = data.dots < requested * 0.95
@@ -454,6 +634,7 @@ $("form").addEventListener("submit", async (e) => {
     setStatus(error.message, true);
   } finally {
     go.disabled = false;
+    drawFeedback();
   }
 });
 
@@ -465,6 +646,8 @@ function showResult(data) {
   draftPoints = [];
   $("detail-warning").textContent = data.warnings.join(" ");
   drawEditor();
+  drawFeedback();
+  showCorrectionChecks(data);
   $("empty").style.display = "none";
   $("results").style.display = "flex";
 
@@ -609,6 +792,174 @@ $("apply-paths").onclick = () => {
   $("style").value = lastResult.style; updateHint();
   pendingEdits = included;
   $("form").requestSubmit();
+};
+
+function captureSettings() {
+  return Object.fromEntries(["style","dots","dots-range","title","max-lines","mystery","judge","detail-density","request","fine-details","ai","guess-test","feedback-ai"].map(id => {
+    const el = $(id); return [id, el.type === "checkbox" ? el.checked : el.value];
+  }));
+}
+function applySettings(settings) {
+  for (const [id, value] of Object.entries(settings || {})) {
+    if (!$(id)) continue;
+    if ($(id).type === "checkbox") $(id).checked = value; else $(id).value = value;
+  }
+  updateHint();
+}
+function appendVersion(result, settings) {
+  versions = versions.slice(0, versionIndex + 1);
+  versions.push({result, settings, feedback: structuredClone(feedbackRegions), saved: new Date().toISOString()});
+  if (versions.length > 6) versions.shift();
+  versionIndex = versions.length - 1;
+  drawVersions();
+}
+function drawVersions() {
+  $("version-list").replaceChildren();
+  versions.forEach((v,i) => {
+    const option = document.createElement("option"); option.value = i;
+    option.textContent = `${i + 1}: ${new Date(v.saved).toLocaleTimeString()} · ${v.feedback.length} corrections`;
+    $("version-list").appendChild(option);
+  });
+  $("version-list").value = versionIndex;
+}
+function restoreVersion(index) {
+  if (go.disabled || !versions[index]) return;
+  reviewBase = null; versionIndex = index;
+  const version = versions[index];
+  feedbackRegions = structuredClone(version.feedback); feedbackBox = null;
+  applySettings(version.settings); showResult(version.result); drawVersions();
+  $("revision-review").style.display = "none";
+  saveProject();
+}
+$("keep-revision").onclick = () => {
+  if (!reviewBase || go.disabled) return;
+  const settings = reviewBase.candidateSettings; reviewBase = null;
+  appendVersion(lastResult, settings); $("revision-review").style.display = "none";
+  drawFeedback(); saveProject(); setStatus("Revision kept.");
+};
+$("discard-revision").onclick = () => restoreVersion(versionIndex);
+$("restore-version").onclick = () => restoreVersion(Number($("version-list").value));
+$("undo-revision").onclick = () => restoreVersion(reviewBase ? versionIndex : versionIndex - 1);
+function normalizedPoint(event) {
+  const p = new DOMPoint(event.clientX,event.clientY).matrixTransform($("feedback-canvas").getScreenCTM().inverse());
+  return [Math.max(0,Math.min(1,p.x/lastResult.width)), Math.max(0,Math.min(1,p.y/lastResult.height))];
+}
+function drawFeedback() {
+  if (!lastResult) return;
+  const svg = $("feedback-canvas"); svg.replaceChildren();
+  svg.setAttribute("viewBox",`0 0 ${lastResult.width} ${lastResult.height}`);
+  if ($("feedback-view").value === "source") svg.appendChild(svgElement("image",{href:lastResult.source_png,width:lastResult.width,height:lastResult.height}));
+  else {
+    const parsed = new DOMParser().parseFromString(lastResult.solution_svg,"image/svg+xml");
+    svg.appendChild(document.importNode(parsed.documentElement,true));
+  }
+  const boxes = feedbackRegions.map((c,i) => ({box:c.box, label:String(i+1)}));
+  if (feedbackBox) boxes.push({box:feedbackBox,label:"New"});
+  boxes.forEach(({box,label}) => {
+    const [a,b,c,d] = box;
+    svg.appendChild(svgElement("rect",{x:a*lastResult.width,y:b*lastResult.height,width:(c-a)*lastResult.width,height:(d-b)*lastResult.height,
+      fill:"#ffb600", "fill-opacity":0.15, stroke:"#c65d00", "stroke-width":2,"pointer-events":"none"}));
+    const text = svgElement("text",{x:a*lastResult.width+4,y:b*lastResult.height+18,fill:"#9c4100","font-size":18});
+    text.textContent = label; svg.appendChild(text);
+  });
+  $("feedback-list").replaceChildren();
+  feedbackRegions.forEach((region,i) => {
+    const li = document.createElement("li");
+    const label = document.createElement("span"); label.textContent = `${region.note} (${region.action}) `;
+    const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit";
+    edit.onclick = () => { if (reviewBase || go.disabled) return; feedbackBox = region.box; $("feedback-note").value = region.note;
+      $("feedback-action").value = region.action; feedbackRegions.splice(i,1); drawFeedback(); saveProject(); };
+    const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Remove";
+    remove.onclick = () => { if (reviewBase || go.disabled) return; feedbackRegions.splice(i,1); drawFeedback(); saveProject(); };
+    li.append(label,edit,remove); $("feedback-list").appendChild(li);
+  });
+  $("regenerate-feedback").disabled = !!reviewBase || go.disabled || !feedbackRegions.length;
+}
+$("feedback-canvas").addEventListener("pointerdown", e => {
+  if (!lastResult || reviewBase || go.disabled) return;
+  e.preventDefault(); regionStart = normalizedPoint(e); feedbackBox = null;
+  $("feedback-canvas").setPointerCapture(e.pointerId);
+});
+$("feedback-canvas").addEventListener("pointermove", e => {
+  if (!regionStart) return;
+  const end = normalizedPoint(e);
+  feedbackBox = [Math.min(regionStart[0],end[0]),Math.min(regionStart[1],end[1]),Math.max(regionStart[0],end[0]),Math.max(regionStart[1],end[1])];
+  drawFeedback();
+});
+$("feedback-canvas").addEventListener("pointerup", () => { regionStart = null; });
+$("feedback-canvas").addEventListener("pointercancel", () => { regionStart = null; feedbackBox = null; drawFeedback(); });
+$("feedback-view").onchange = drawFeedback;
+$("clear-feedback-box").onclick = () => { feedbackBox = null; drawFeedback(); };
+$("add-feedback").onclick = () => {
+  if (reviewBase || go.disabled) return;
+  const note = $("feedback-note").value.trim();
+  if (!feedbackBox || feedbackBox[2]-feedbackBox[0] < 0.005 || feedbackBox[3]-feedbackBox[1] < 0.005 || !note) {
+    setStatus("Draw a box and describe what should change.",true); return;
+  }
+  if (feedbackRegions.length >= 20) { setStatus("Use at most 20 correction regions.",true); return; }
+  feedbackRegions.push({id:crypto.randomUUID(),box:feedbackBox,note,action:$("feedback-action").value});
+  feedbackBox = null; $("feedback-note").value = ""; drawFeedback(); saveProject();
+};
+$("regenerate-feedback").onclick = () => {
+  if (reviewBase || go.disabled || !feedbackRegions.length) return;
+  if (feedbackBox || $("feedback-note").value.trim()) { setStatus("Add or clear the pending correction first.",true); return; }
+  revisionRequest = true; $("form").requestSubmit();
+};
+function showCorrectionChecks(data) {
+  $("feedback-checks").replaceChildren();
+  (data.correction_checks || []).forEach(check => {
+    const p = document.createElement("p");
+    const i = (data.corrections || []).findIndex(c => c.id === check.id);
+    p.textContent = `Region ${i+1}: ${check.action} · ${check.status === "needs_review" ? "Needs review" : "Geometry checked"}${check.coverage === null ? "" : ` · ${Math.round(check.coverage*100)}% traced`} — ${check.message}`;
+    $("feedback-checks").appendChild(p);
+  });
+}
+// Store only on this browser/device. IndexedDB supports the source image Blob
+// and a bounded six-version history without putting photos in localStorage.
+function openProjects() {
+  return new Promise((resolve,reject) => {
+    const req = indexedDB.open("dot2dot-projects",1);
+    req.onupgradeneeded = () => req.result.createObjectStore("projects");
+    req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
+  });
+}
+function saveProject() {
+  if (!chosenFile || !lastResult) return;
+  const generation = projectGeneration;
+  const record = {image:chosenFile,name:chosenFile.name,feedback:structuredClone(feedbackRegions),versions:structuredClone(versions),
+    versionIndex, settings:captureSettings()};
+  saveChain = saveChain.catch(()=>{}).then(async () => {
+    if (generation !== projectGeneration) return;
+    try {
+      const db = await openProjects();
+      await new Promise((resolve,reject) => {
+        const tx = db.transaction("projects","readwrite"); tx.objectStore("projects").put(record,"last");
+        tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
+      });
+      db.close(); $("feedback-save-status").textContent = "Project saved on this device, including the original image and up to six kept versions.";
+      $("restore-project").style.display = "block";
+    } catch { $("feedback-save-status").textContent = "Local save unavailable. Keep this tab open to retain feedback."; }
+  });
+}
+async function readProject() {
+  const db = await openProjects();
+  const record = await new Promise((resolve,reject) => {
+    const req = db.transaction("projects","readonly").objectStore("projects").get("last");
+    req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
+  }); db.close(); return record;
+}
+readProject().then(record => { if (record) $("restore-project").style.display = "block"; }).catch(()=>{});
+$("restore-project").onclick = async () => {
+  if (go.disabled && chosenFile) return;
+  try {
+    await saveChain;
+    const record = await readProject(); if (!record) return;
+    chooseFile(new File([record.image],record.name,{type:record.image.type}));
+    feedbackRegions = record.feedback || []; versions = record.versions || []; versionIndex = record.versionIndex;
+    applySettings(record.settings); drawVersions();
+    if (versions[versionIndex]) showResult(versions[versionIndex].result);
+    setStatus("Saved project restored. Regenerate to refresh its PDF download if the server restarted.");
+  } catch { setStatus("Could not restore the saved project.",true); }
 };
 
 function svgBlobUrl(which) {

@@ -22,9 +22,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from dot2dot import config
-from dot2dot.guidance import plan_overlay
+from dot2dot.guidance import plan_overlay, apply_plan
+from dot2dot.feedback import Correction, CorrectionCheck, apply_feedback, check_feedback
 from dot2dot.pdf import pdf_bytes
-from dot2dot.pipeline import STYLES, build
+from dot2dot.pipeline import STYLES, build, extract_paths
 from dot2dot.models import Path as DrawingPath
 from dot2dot.preprocess import resize
 from dot2dot.judge import OpenAIJudge, judge_images, run_guess_test, tune_mystery
@@ -97,14 +98,15 @@ class EditPath(BaseModel):
     closed: bool = False
     essential: bool = False
     protected: bool = False
+    feature: bool = False
     weight: float = 1.0
 
 
 def parse_edit_paths(raw: str, width: int, height: int) -> list[DrawingPath]:
     try:
         items = json.loads(raw)
-        if not isinstance(items, list) or not 1 <= len(items) <= 500:
-            raise ValueError("Provide between 1 and 500 paths")
+        if not isinstance(items, list) or not 1 <= len(items) <= 2000:
+            raise ValueError("Provide between 1 and 2000 paths")
         paths = []
         total_points = 0
         for item in items:
@@ -120,7 +122,7 @@ def parse_edit_paths(raw: str, width: int, height: int) -> list[DrawingPath]:
             points = np.asarray(path.points, dtype=float)
             if np.linalg.norm(np.diff(points, axis=0), axis=1).sum() < 1:
                 raise ValueError("Path must contain distinct points")
-            paths.append(DrawingPath(points, path.closed, path.essential, path.weight, protected=path.protected))
+            paths.append(DrawingPath(points, path.closed, path.essential, path.weight, protected=path.protected, feature=path.feature))
         return paths
     except (ValueError, TypeError) as error:
         raise HTTPException(400, f"Invalid edited paths: {error}") from error
@@ -132,6 +134,9 @@ class PuzzleOut(BaseModel):
     height: int
     edit_paths: list[EditPath]
     warnings: list[str] = []
+    corrections: list[Correction] = []
+    correction_checks: list[CorrectionCheck] = []
+    feedback_ai_used: bool = False
     id: str
     dots: int
     printed_details: int = 0
@@ -276,7 +281,10 @@ def create_puzzle(
     max_lines: int | None = Form(None),
     title: str = Form("Connect the Dots"),
     fine_details: bool = Form(False),
+    detail_density: str = Form("balanced"),
     edited_paths: str | None = Form(None),
+    feedback: str = Form("[]"),
+    feedback_ai: bool = Form(False),
     ai: bool = Form(False),
     request: str = Form(""),
     mystery: str = Form("0"),  # "0", "1", "2" or "auto" (AI picks the level)
@@ -287,6 +295,8 @@ def create_puzzle(
         raise HTTPException(400, f"style must be one of: {', '.join(STYLES)}")
     if not MIN_DOTS <= dots <= MAX_DOTS:
         raise HTTPException(400, f"dots must be between {MIN_DOTS} and {MAX_DOTS}")
+    if detail_density not in ("balanced", "all"):
+        raise HTTPException(400, "detail_density must be balanced or all")
     if mystery not in ("0", "1", "2", "auto"):
         raise HTTPException(400, "mystery must be 0, 1, 2 or auto")
 
@@ -301,6 +311,18 @@ def create_puzzle(
 
     if edited_paths is not None and len(edited_paths) > 8 * 1024 * 1024:
         raise HTTPException(413, "Edited paths are too large")
+
+    try:
+        if len(feedback) > 64000:
+            raise ValueError("Feedback is too large")
+        raw_feedback = json.loads(feedback)
+        if not isinstance(raw_feedback, list) or len(raw_feedback) > 20:
+            raise ValueError("Use at most 20 correction regions")
+        corrections = [Correction.model_validate(item) for item in raw_feedback]
+        if len({c.id for c in corrections}) != len(corrections):
+            raise ValueError("Correction ids must be unique")
+    except (ValueError, TypeError) as error:
+        raise HTTPException(400, f"Invalid feedback: {error}") from error
 
     plan, ai_error = None, None
     if ai:
@@ -321,9 +343,54 @@ def create_puzzle(
     working = resize(picture, WORKING_SIZE[actual_style])
     override = parse_edit_paths(edited_paths, working.shape[1], working.shape[0]) if edited_paths is not None else None
 
+    affected = {}
+    focused_plans = {}
+    feedback_ai_used = False
+    feedback_notes = []
+    if corrections:
+        # Every revision starts from the source (or explicit manual edits), then
+        # reapplies the complete annotation history before global renumbering.
+        try:
+            source_paths = override if override is not None else extract_paths(working, actual_style)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        if plan is not None and override is None:
+            source_paths = apply_plan(source_paths, plan, working)
+        if feedback_ai:
+            interpreter = get_planner()
+            if interpreter is None:
+                feedback_notes.append("AI feedback interpretation unavailable; used the selected local correction actions.")
+            else:
+                from dataclasses import replace
+                from dot2dot.planner import Part
+                for correction in corrections:
+                    if correction.resolved_action() not in ("restore", "protect"):
+                        continue
+                    x0,y0,x1,y1 = correction.pixels(working.shape)
+                    try:
+                        local_plan = interpreter.plan(working[y0:y1,x0:x1],
+                            "Correct this marked region: " + correction.note +
+                            ". Identify the specific visible parts needed for this correction, not invented geometry.")
+                        height,width = working.shape[:2]
+                        def global_part(part):
+                            a,b,c,d = part.box
+                            return Part(part.name, ((x0+a*(x1-x0))/width, (y0+b*(y1-y0))/height,
+                                                    (x0+c*(x1-x0))/width, (y0+d*(y1-y0))/height))
+                        focused = replace(local_plan, must_include=[global_part(p) for p in local_plan.must_include], ignore=[])
+                        focused_plans[correction.id] = focused
+                        feedback_ai_used = True
+                    except Exception:
+                        feedback_notes.append(f"AI interpretation failed for region {correction.id}; used its local action.")
+        override = source_paths
+        for correction in corrections:
+            override, changed = apply_feedback(override, [correction], working)
+            affected.update(changed)
+            if correction.id in focused_plans:
+                override = apply_plan(override, focused_plans[correction.id], working)
+
     def build_at(level: int):
         return build(picture, num_dots=dots, max_paths=max_paths, style=actual_style, plan=plan,
-                     mystery_level=level, reference_override=override, fine_details=fine_details)
+                     mystery_level=level, reference_override=override, fine_details=fine_details, detail_density=detail_density)
 
     test, candidates = None, []
     if judge_kind not in ("trained", "clip", "openai"):
@@ -381,12 +448,19 @@ def create_puzzle(
             overlay_png=_png_data_url(plan_overlay(preview, plan)),
         )
 
-    warnings = []
+    warnings = list(feedback_notes)
+    correction_checks = check_feedback(puzzle, result.reference, corrections, affected)
+    if corrections:
+        warnings.append("Feedback checks measure traced geometry, not whether the requested anatomy or identity is correct. Review before keeping the revision.")
+    if puzzle.details and detail_density == "balanced":
+        warnings.append("Balanced detail thins dense short strokes; choose All details to retain every extracted detail.")
     if puzzle.details:
         warnings.append("Fine details are printed on both sheets. This preserves small features but makes the picture easier to guess.")
     picture_dots = sum(s.end - s.start for s in puzzle.strokes if not s.filler)
     if picture_dots > dots:
-        warnings.append(f"Used {picture_dots} picture dots to preserve required lines (requested {dots}).")
+        raise HTTPException(422, "The puzzle exceeded its picture dot budget; the revision was not accepted")
+    if quality.outline_coverage is not None and quality.outline_coverage < 0.8:
+        warnings.append("The main outline is incomplete. Do not accept this revision without reviewing the whole shape.")
     if quality.detail_coverage is not None and quality.detail_coverage < 0.65:
         warnings.append("Interior details are missing. Inspect the traced lines, protect important details, or increase picture dots.")
     for name, coverage in quality.parts:
@@ -398,8 +472,9 @@ def create_puzzle(
     return PuzzleOut(
         source_png=_png_data_url(working), width=puzzle.width, height=puzzle.height,
         edit_paths=[EditPath(points=p.points.tolist(), closed=p.closed, essential=p.essential,
-                             protected=p.protected, weight=p.weight) for p in result.reference],
-        warnings=warnings,
+                             protected=p.protected, feature=p.feature, weight=p.weight) for p in result.reference],
+        warnings=warnings, corrections=corrections, correction_checks=correction_checks,
+        feedback_ai_used=feedback_ai_used,
         id=puzzle_id,
         dots=len(puzzle.dots),
         printed_details=len(puzzle.details),

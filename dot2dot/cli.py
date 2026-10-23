@@ -25,6 +25,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="auto: pick for you (default); lineart: cartoons and coloring pages; "
         "photo: real photos and busy backgrounds; outline: just the border",
     )
+    parser.add_argument("--detail-density", choices=["balanced", "all"], default="balanced", help="density of printed fine details (default: balanced)")
     parser.add_argument("--fine-details", action="store_true", help="print small interior details on both sheets (hybrid puzzle)")
     parser.add_argument("--ai", action="store_true", help="use the AI planner (needs OPENAI_API_KEY in .env)")
     parser.add_argument(
@@ -76,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         picture = _load(args.image)
 
         def build_at(level: int):
-            return build(picture, num_dots=args.dots, max_paths=max_paths, style=args.style, plan=plan, mystery_level=level, fine_details=args.fine_details)
+            return build(picture, num_dots=args.dots, max_paths=max_paths, style=args.style, plan=plan, mystery_level=level, fine_details=args.fine_details, detail_density=args.detail_density)
 
         test = None
         if args.mystery == "auto" or args.guess_test:

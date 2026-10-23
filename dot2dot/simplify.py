@@ -45,6 +45,22 @@ def min_dots(path: Path) -> int:
     return MIN_DOTS_CLOSED if path.closed else MIN_DOTS_OPEN
 
 
+def required_dots(path: Path) -> int:
+    """Minimum useful geometry for a selected path, never an extra budget."""
+    return max(min_dots(path), min(len(path.points), 6 if path.closed else 4)) if path.protected else min_dots(path)
+
+
+def _reservation(paths: list[Path], total: int) -> np.ndarray:
+    counts = np.array([required_dots(p) for p in paths], dtype=int)
+    essentials = [i for i,p in enumerate(paths) if p.essential]
+    if essentials:
+        # Reserve half the budget by silhouette length before interior details.
+        length = sum(paths[i].length() for i in essentials)
+        for i in essentials:
+            counts[i] = max(counts[i], int(0.5 * total * paths[i].length() / max(length, 1)))
+    return counts
+
+
 def turning(path: Path) -> float:
     """Total amount the path turns, in radians (a circle turns 2π)."""
     return float(_step_turns(path).sum())
@@ -69,8 +85,9 @@ def allocate_dots(paths: list[Path], total: int, min_spacing: float | None = Non
         for p in paths
     ])
     # Reserve the minimum geometry for every selected path before sharing extras.
-    counts = np.array([max(min_dots(p), min(len(p.points), 6 if p.closed else 4))
-                       if p.protected else min_dots(p) for p in paths], dtype=int)
+    counts = _reservation(paths, total)
+    if counts.sum() > total:
+        raise ValueError("Selected paths exceed the dot budget; select fewer detail paths")
     caps = np.maximum(caps, counts)
     open_ = np.ones(len(paths), dtype=bool)
     remaining = max(0, total - int(counts.sum()))
@@ -102,20 +119,30 @@ def select_paths(paths: list[Path], total: int, max_paths: int | None = None) ->
     With 60 dots spread over 10,000 px of lines, each dot "covers" ~170 px,
     so a 100 px squiggle isn't worth including.
     """
-    # Essential paths first, then the rest from longest to shortest.
+    if total < 2:
+        raise ValueError("A puzzle needs at least two dots")
     paths = sorted(paths, key=lambda p: (p.essential, p.protected, p.weighted_length()), reverse=True)
     if max_paths is not None:
         paths = paths[:max_paths]
-    while len(paths) > 1 and not (paths[-1].essential or paths[-1].protected):
+    # Trim low-priority paths until both minimum geometry and the silhouette
+    # reservation fit. Protection is a priority, not unlimited dot creation.
+    while len(paths) > 1:
+        over_budget = int(_reservation(paths, total).sum()) > total
         spacing = sum(p.weighted_length() for p in paths) / total
-        if paths[-1].weighted_length() >= spacing * max(MIN_EARNED_DOTS, min_dots(paths[-1]) - 0.5):
+        too_small = (not (paths[-1].essential or paths[-1].protected)
+                     and paths[-1].weighted_length() < spacing * max(MIN_EARNED_DOTS, min_dots(paths[-1]) - 0.5))
+        if not over_budget and not too_small:
             break
+        if paths[-1].essential:
+            raise ValueError("Too few dots for the subject's separate outlines; increase the dot count")
         paths.pop()
+    if paths and _reservation(paths, total).sum() > total:
+        raise ValueError("Too few dots for this path")
     return paths
 
 
 def declutter(paths: list[Path], image_size: int) -> list[Path]:
-    """Drop dots that sit almost on top of a dot from an earlier path.
+    """Remove redundant crowded dots only when their geometry stays intact.
 
     Where lines meet (an eye corner, a junction), every line ends with its
     own dot at the same spot, and the stacked numbers become unreadable.
@@ -126,13 +153,27 @@ def declutter(paths: list[Path], image_size: int) -> list[Path]:
     result = []
     for path in paths:
         points = path.points
-        if len(claimed) and not path.protected:
+        if len(claimed) and not (path.protected or path.essential):
             nearest = np.linalg.norm(points[:, None, :] - claimed[None, :, :], axis=2).min(axis=1)
-            keep = nearest >= radius
-            if keep.sum() >= min_dots(path):
-                points = points[keep]
-            elif keep.sum() == 0:
-                continue  # entirely on top of other lines; nothing new to draw
+            # A crowded corner is still a corner. Removing it reconnects its
+            # neighbors with a shortcut across the subject. Only remove a
+            # near-collinear point whose replacement chord preserves geometry.
+            retained = list(range(len(points)))
+            for index in np.flatnonzero(nearest < radius):
+                index = int(index)
+                if len(retained) <= min_dots(path) or index not in retained:
+                    continue
+                slot = retained.index(index)
+                if not path.closed and slot in (0, len(retained) - 1):
+                    continue
+                before = points[retained[slot - 1]]
+                after = points[retained[(slot + 1) % len(retained)]]
+                chord = after - before
+                t = np.clip(np.dot(points[index] - before, chord) / max(np.dot(chord, chord), 1e-9), 0, 1)
+                error = np.linalg.norm(points[index] - (before + t * chord))
+                if error <= min(1.0, image_size / 1000):
+                    retained.pop(slot)
+            points = points[retained]
         result.append(replace(path, points=points))
         claimed = np.concatenate([claimed, points])
     return result

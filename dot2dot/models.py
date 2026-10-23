@@ -27,6 +27,8 @@ class Path:
     filler: bool = False
     # Important interior detail: preserve independently of silhouette semantics.
     protected: bool = False
+    # Enclosed light feature, such as a white eye in a dark cartoon mask.
+    feature: bool = False
 
     def length(self) -> float:
         steps = np.linalg.norm(np.diff(self.points, axis=0), axis=1).sum()

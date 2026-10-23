@@ -85,6 +85,7 @@ def build(
     mystery_level: int = 0,
     reference_override: list[Path] | None = None,
     fine_details: bool = False,
+    detail_density: str = "balanced",
 ) -> Result:
     """Like `generate`, but also returns the reference paths for quality checks.
 
@@ -105,8 +106,29 @@ def build(
     reference = extract_paths(image, style) if reference_override is None else reference_override
     if plan is not None and reference_override is None:
         reference = apply_plan(reference, plan, image)
-    puzzle = assemble(reference, width, height, num_dots, max_paths, mystery_level, seed, fine_details)
+    puzzle = assemble(reference, width, height, num_dots, max_paths, mystery_level, seed, fine_details, detail_density)
     return Result(puzzle, reference, style, plan)
+
+
+def balance_details(paths: list[Path], image_size: int) -> list[Path]:
+    """Thin dense short open strokes while retaining loops, features and long lines.
+
+    Geometry only: do not claim to understand which strokes are suit webbing.
+    Keep the longest two short strokes in each local cell, plus protected paths.
+    """
+    cell = image_size * 0.08
+    buckets: dict[tuple[int, int], list[Path]] = {}
+    retained = set()
+    for path in paths:
+        if path.protected or path.feature or path.closed or path.length() >= cell * 1.5:
+            retained.add(path)
+        else:
+            center = path.points.mean(axis=0)
+            key = tuple((center // cell).astype(int))
+            buckets.setdefault(key, []).append(path)
+    for bucket in buckets.values():
+        retained.update(sorted(bucket, key=lambda p: p.length(), reverse=True)[:2])
+    return [p for p in paths if p in retained]
 
 
 def assemble(
@@ -118,6 +140,7 @@ def assemble(
     mystery_level: int = 0,
     seed: bytes = b"",
     fine_details: bool = False,
+    detail_density: str = "balanced",
 ) -> Puzzle:
     """Turn traced paths into a numbered puzzle: select, place dots, order, label.
 
@@ -128,8 +151,10 @@ def assemble(
         raise ValueError("No clear subject found in the image")
     # Short ink strokes are often eyes, knuckles and boot seams. In hybrid
     # mode print them rather than forcing tiny labels onto every fragment.
-    details = [p for p in reference if not p.essential and not p.protected
-               and 10 <= p.length() < 0.14 * max(width, height)] if fine_details else []
+    if detail_density not in ("balanced", "all"):
+        raise ValueError("detail_density must be balanced or all")
+    details = [p for p in reference if p.feature or (not p.essential and not p.protected
+               and 10 <= p.length() < 0.14 * max(width, height))] if fine_details else []
     candidates = [p for p in reference if p not in details]
     if not candidates:
         candidates, details = reference, []
@@ -166,6 +191,8 @@ def assemble(
     if fine_details:
         # Also preserve unselected interior lines; never add excluded editor paths.
         details += [p for p in candidates if not p.essential and p not in paths and p.length() >= 10]
+        if detail_density == "balanced":
+            details = balance_details(details, max(width, height))
 
     # Flatten the ordered paths into one numbered list of dots.
     points = np.concatenate([p.points for p in ordered])
