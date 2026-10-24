@@ -280,6 +280,14 @@ storage can be unavailable or cleared, and PDF links expire with the server's
 in-memory cache; regenerate to refresh a PDF download. No cloud project storage
 is used.
 
+Dot placement measures how far the straight connecting lines deviate from the
+source paths. It moves redundant dots from flatter runs to tighter bends, then
+rebalances a small portion of the existing allocation between selected strokes,
+prioritizing the silhouette and protected features. This improves curves at
+300–500 dots without increasing the picture budget. Corners and open endpoints
+stay on the source paths. Lower budgets still cannot preserve every detail of
+a 1,000-dot puzzle.
+
 In multi-line puzzles, a **ringed dot** marks the start of a new line: lift the pencil and continue from there. Detailed drawings need more dots (200–400) to stay recognizable.
 
 ---

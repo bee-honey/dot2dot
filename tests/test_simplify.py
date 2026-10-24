@@ -60,3 +60,37 @@ def test_select_paths_drops_tiny_paths(square_outline):
     big = Path(square_outline * 10, closed=True)  # ~4000 px around
     speck = Path(np.array([[0, 0], [10, 0]], dtype=np.float64), closed=False)
     assert select_paths([speck, big], total=40) == [big]
+
+
+def test_fixed_count_sampling_preserves_a_tight_bend_in_a_long_path():
+    from dot2dot.simplify import curve_error
+    x = np.linspace(0,1000,2001)
+    path = Path(np.column_stack([x,100*np.exp(-((x-500)/70)**2)]),closed=False)
+    points = simplify(path,20)
+    # A long flat region must not steal the samples needed by a narrow bend.
+    assert len(points)==20
+    assert curve_error(path,points)<2.5
+    assert np.array_equal(points[[0,-1]],path.points[[0,-1]])
+    original={tuple(point) for point in path.points}
+    assert all(tuple(point) in original for point in points)
+
+
+def test_curve_reallocation_uses_the_same_total_budget():
+    from dot2dot.simplify import resample_paths,curve_error
+    straight=Path(np.column_stack([np.arange(500),np.zeros(500)]),closed=False)
+    angles=np.linspace(0,np.pi/2,200)
+    bend=Path(np.column_stack([600+40*np.cos(angles),40*np.sin(angles)]),closed=False)
+    sampled=resample_paths([straight,bend],[28,2],10)
+    assert sum(len(path.points) for path in sampled)==30
+    assert len(sampled[1].points)>2
+    assert curve_error(bend,sampled[1].points)<4
+    assert np.array_equal(sampled[1].points[[0,-1]],bend.points[[0,-1]])
+
+
+def test_shape_aware_sampling_handles_closed_seam_without_exceeding_budget():
+    from dot2dot.simplify import curve_error
+    angles=np.linspace(0,2*np.pi,1000,endpoint=False)
+    path=Path(np.column_stack([300+180*np.cos(angles),300+40*np.sin(angles)]),closed=True)
+    points=simplify(path,30)
+    assert len(points)==30
+    assert curve_error(path,points)<2

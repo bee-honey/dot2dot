@@ -254,3 +254,21 @@ def test_ironman_dots_only_budget_and_pose_when_sample_available():
     assert quality.outline_coverage >= .95
     assert quality.accuracy >= .95
     assert quality.crowded_labels <= 10
+
+
+def test_low_budget_ironman_curves_when_sample_available():
+    from pathlib import Path as FilePath
+    import pytest
+    from dot2dot.pipeline import extract_paths
+    from dot2dot.preprocess import load_image,resize
+    from dot2dot.simplify import allocate_dots,resample_paths,curve_error
+    source=FilePath('samples/private/ironman.gif')
+    if not source.exists():
+        pytest.skip('Private reference image is not committed')
+    reference=extract_paths(resize(load_image(source),1000),'lineart')
+    for budget in [300,500]:
+        paths=select_paths(reference,budget)
+        counts=allocate_dots(paths,budget,min_spacing=1000/70)
+        sampled=resample_paths(paths,counts,1000/70)
+        assert sum(len(p.points) for p in sampled)<=budget
+        assert max(curve_error(p,s.points) for p,s in zip(paths,sampled) if p.essential)<4

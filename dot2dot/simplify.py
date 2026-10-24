@@ -6,7 +6,9 @@ Strategy:
 2. Between corners, space dots evenly along the line, with extra density
    where it curves. We measure position along the path in "effort":
        effort = distance travelled + SPACING_PER_RADIAN * amount of turning
-   and place dots at equal steps of effort. A straight run gets dots by
+   and place dots at equal steps of effort. Then measure chord error and
+   move redundant dots from flatter sections to under-sampled bends, without
+   changing the count or the corner anchors. A straight run gets dots by
    length alone; a tight curve (an eye, a fingertip) gets extra dots so it
    stays round; a gentle curve gets evenly spaced dots, never clumps.
 
@@ -111,6 +113,77 @@ def allocate_dots(paths: list[Path], total: int, min_spacing: float | None = Non
         if add.sum() == 0:
             break
     return [max(int(c), min_dots(p)) for c, p in zip(counts, paths)]
+
+
+def curve_error(path: Path, samples: np.ndarray) -> float:
+    """Largest source-to-chord deviation, in source pixels."""
+    a = samples if path.closed else samples[:-1]
+    b = np.roll(samples, -1, axis=0) if path.closed else samples[1:]
+    if not len(a):
+        return 0.0
+    ab = b - a
+    maximum = 0.0
+    # Bound temporary memory even for very long source paths.
+    for start in range(0, len(path.points), 512):
+        offsets = path.points[start:start+512, None, :] - a
+        t = np.clip(np.sum(offsets * ab, axis=2) / np.maximum(np.sum(ab * ab, axis=1), 1e-9), 0, 1)
+        nearest = np.linalg.norm(offsets - t[:, :, None] * ab, axis=2).min(axis=1)
+        maximum = max(maximum, float(nearest.max()))
+    return maximum
+
+
+def resample_paths(paths: list[Path], counts: list[int], min_spacing: float) -> list[Path]:
+    """Spend an existing allocation on shape error, preserving its total budget.
+
+    Only move a dot when the target's error improves and the donor remains
+    more accurate than the old target. Keep minimum geometry and the reserved
+    silhouette allocation. Permit one extra tightly spaced point for a short
+    bend; never grow the overall dot budget.
+    """
+    counts = list(counts)
+    floors = _reservation(paths, sum(counts))
+    cache = {}
+    def candidate(index, count):
+        key = (index, count)
+        if key not in cache:
+            points = simplify(paths[index], count)
+            cache[key] = (points, curve_error(paths[index], points))
+        return cache[key]
+
+    errors = [candidate(i,n)[1] for i,n in enumerate(counts)]
+    for _ in range(min(25, sum(counts)//20)):
+        changed = False
+        for target in sorted(range(len(paths)),
+                             key=lambda i: (paths[i].essential, paths[i].protected, errors[i]), reverse=True):
+            old_error = errors[target]
+            if old_error <= 1.5:
+                continue
+            cap = max(required_dots(paths[target]), int(paths[target].length()/min_spacing) +
+                      (0 if paths[target].closed else 1)) + 1
+            if counts[target] >= min(cap, len(paths[target].points)):
+                continue
+            _, improved_error = candidate(target, counts[target]+1)
+            if improved_error >= old_error * 0.9:
+                continue
+            donors = [i for i in range(len(paths)) if i != target and counts[i] > floors[i]]
+            # Examine the most accurately represented candidates first.
+            donors.sort(key=lambda i: errors[i])
+            possible = []
+            for donor in donors[:12]:
+                _, donor_error = candidate(donor, counts[donor]-1)
+                if donor_error < old_error * 0.9:
+                    possible.append((donor_error, donor))
+            if not possible:
+                continue
+            donor_error, donor = min(possible)
+            counts[donor] -= 1
+            counts[target] += 1
+            errors[donor], errors[target] = donor_error, improved_error
+            changed = True
+            break
+        if not changed:
+            break
+    return [replace(path, points=candidate(i,n)[0]) for i,(path,n) in enumerate(zip(paths,counts))]
 
 
 def select_paths(paths: list[Path], total: int, max_paths: int | None = None) -> list[Path]:
@@ -218,7 +291,66 @@ def simplify(path: Path, n: int) -> np.ndarray:
             indices.append(_index_at(effort, target % total_effort if path.closed else target, count))
     if not path.closed:
         indices.append(anchors[-1])
-    return points[_dedupe(indices)]
+    indices = _refine_curve_indices(path, _dedupe(indices), set(anchors), spacing)
+    return points[indices]
+
+
+def _refine_curve_indices(path: Path, indices: list[int], anchors: set[int], spacing: float) -> list[int]:
+    """Move redundant samples to the worst chord deviations at a fixed count.
+
+    Keep source coordinates, corner anchors and endpoint order. A swap is only
+    accepted if both the merged donor gap and the split target gaps have less
+    error than the old worst gap. Already accurate curves remain unchanged.
+    """
+    if len(indices) < 4:
+        return indices
+    points = path.points
+    cache: dict[tuple[int, int], tuple[float, int]] = {}
+
+    def gap_error(start: int, end: int) -> tuple[float, int]:
+        key = (start, end)
+        if key not in cache:
+            indexes = (np.arange(start, end + 1) if end > start else
+                       np.concatenate([np.arange(start, len(points)), np.arange(0, end + 1)]))
+            line = points[end] - points[start]
+            offsets = points[indexes] - points[start]
+            t = np.clip(offsets @ line / max(float(line @ line), 1e-9), 0, 1)
+            distances = np.linalg.norm(offsets - t[:, None] * line, axis=1)
+            farthest = int(np.argmax(distances))
+            cache[key] = (float(distances[farthest]), int(indexes[farthest]))
+        return cache[key]
+
+    indices = sorted(indices)
+    # Below a pixel-scale tolerance, reallocating samples chases raster noise.
+    tolerance = max(1.25, 0.04 * spacing)
+    for _ in range(min(80, len(indices))):
+        pairs = list(zip(indices, indices[1:]))
+        if path.closed:
+            pairs.append((indices[-1], indices[0]))
+        start, end = max(pairs, key=lambda pair: gap_error(*pair)[0])
+        worst, insert = gap_error(start, end)
+        if worst <= tolerance or insert in indices:
+            break
+        split_error = max(gap_error(start, insert)[0], gap_error(insert, end)[0])
+        if split_error >= worst * 0.9:
+            break
+        donors = []
+        for slot, index in enumerate(indices):
+            if index in anchors or index in (start, end):
+                continue
+            if not path.closed and slot in (0, len(indices)-1):
+                continue
+            before, after = indices[slot-1], indices[(slot+1) % len(indices)]
+            merged_error = gap_error(before, after)[0]
+            if max(merged_error, split_error) < worst * 0.9:
+                donors.append((merged_error, index))
+        if not donors:
+            break
+        _, remove = min(donors)
+        indices.remove(remove)
+        indices.append(insert)
+        indices.sort()
+    return indices
 
 
 def _step_lengths(path: Path) -> np.ndarray:

@@ -14,7 +14,7 @@ from dot2dot.models import Dot, Path, Puzzle, Stroke
 from dot2dot.order import order_paths
 from dot2dot.planner import Plan
 from dot2dot.preprocess import load_image, resize, to_grayscale
-from dot2dot.simplify import MIN_SPACING_FRACTION, allocate_dots, declutter, max_readable_dots, select_paths, simplify
+from dot2dot.simplify import MIN_SPACING_FRACTION, allocate_dots, declutter, max_readable_dots, select_paths, simplify, resample_paths
 
 STYLES = ("auto", "sketch", "outline", "lineart", "photo")
 # Line art and photos keep more detail, so they're processed at a higher resolution.
@@ -166,7 +166,7 @@ def assemble(
         paths = select_paths(candidates, num_dots, max_paths)
 
     counts = allocate_dots(paths, num_dots, min_spacing=MIN_SPACING_FRACTION * max(width, height))
-    simplified = [replace(p, points=simplify(p, n)) for p, n in zip(paths, counts)]
+    simplified = resample_paths(paths, counts, MIN_SPACING_FRACTION * max(width, height))
     # Resolve picture junctions before fillers or reveal ordering can affect them.
     simplified = declutter(order_paths(simplified), max(width, height))
     if mystery_level:
