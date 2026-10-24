@@ -190,6 +190,23 @@ dot2dot my_cartoon.png --style lineart --dots 250 --check
 pytest
 ```
 
+### Start and stop the local app
+
+After installing dependencies into `.venv`, no environment activation is needed:
+
+```bash
+make up       # start in the background at http://127.0.0.1:8000
+make down     # stop the managed server
+make restart  # stop and start again after Python code changes
+make status   # show the running URL and PID
+make logs     # print the last 80 log lines
+```
+
+Use `make up PORT=8001` if port 8000 is occupied. Commands manage one server
+per checkout and only stop the process they started. If you previously started
+`dot2dot-web` manually, stop that process first. Runtime files live in `.run/`
+and are git-ignored. This helper supports macOS and Linux.
+
 | Style | Use for | How it works |
 |-------|---------|--------------|
 | `auto` (default) | Anything | Line art when the background is plain, Photo otherwise |

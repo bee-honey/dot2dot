@@ -46,3 +46,6 @@ output/
 
 # Personal test photos (never commit)
 samples/private/
+
+# Local development server PID, lock, and logs
+.run/
